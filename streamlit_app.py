@@ -1,1 +1,363 @@
-import streamlit as st import pandas as pd import datetime import os # --- PAGE CONFIGURATION --- st.set\_page\_config( page\_title="Trojan Market - Store Management System", page\_icon="🛡️", layout="wide" ) # --- DATABASE / LOCAL FILE INITIALIZATION (NO GOOGLE DEPENDENCIES) --- ROSTER\_FILE = "roster.csv" SHIFTS\_FILE = "shift\_logs.csv" INVENTORY\_FILE = "inventory.csv" SALES\_FILE = "revtrack\_sales.csv" def init\_databases(): # Initialize Student Roster with SHS DECA Officers &amp; Course Data if not os.path.exists(ROSTER\_FILE): roster\_data = pd.DataFrame([ {"student\_id": "SIM1001", "first\_name": "Caroline", "last\_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req\_hours": 20}, {"student\_id": "SIM1002", "first\_name": "Elizabeth", "last\_name": "Cadoff", "course": "6-Marketing", "track": "VP-School Store", "req\_hours": 20}, {"student\_id": "SIM1003", "first\_name": "Radha", "last\_name": "Bansal", "course": "1-Entrepreneurship", "track": "VP-Marketing", "req\_hours": 20}, {"student\_id": "SIM1004", "first\_name": "Liam", "last\_name": "Ricciardelli", "course": "2-Marketing", "track": "Officer", "req\_hours": 10}, {"student\_id": "SIM1005", "first\_name": "Julian", "last\_name": "Mass", "course": "2-Marketing", "track": "Honors: Store", "req\_hours": 10}, {"student\_id": "SIM1006", "first\_name": "Henry", "last\_name": "Pfeiffer", "course": "6-Marketing", "track": "ICDC", "req\_hours": 10}, {"student\_id": "SIM1007", "first\_name": "Caleb", "last\_name": "Deems", "course": "7-SEM", "track": "Honors: Store", "req\_hours": 10}, {"student\_id": "SIM1008", "first\_name": "Olivia", "last\_name": "Campasano", "course": "Accounting 2", "track": "Store", "req\_hours": 10} ]) roster\_data.to\_csv(ROSTER\_FILE, index=False) # Initialize Shift Log if not os.path.exists(SHIFTS\_FILE): shifts\_data = pd.DataFrame(columns=["student\_id", "name", "check\_in", "check\_out", "hours\_logged", "shift\_type", "status"]) shifts\_data.to\_csv(SHIFTS\_FILE, index=False) # Initialize Store Inventory if not os.path.exists(INVENTORY\_FILE): inventory\_data = pd.DataFrame([ {"item\_id": "SKU-001", "item\_name": "Fresh Baked Cookies", "category": "Food", "stock": 48, "unit\_price": 1.50}, {"item\_id": "SKU-002", "item\_name": "Fresh Popcorn Bag", "category": "Food", "stock": 30, "unit\_price": 2.00}, {"item\_id": "SKU-003", "item\_name": "Slushy (Full Size)", "category": "Beverage", "stock": 25, "unit\_price": 2.50}, {"item\_id": "SKU-004", "item\_name": "SHS Trojan Hoodie", "category": "Apparel", "stock": 15, "unit\_price": 35.00}, {"item\_id": "SKU-005", "item\_name": "Trojan Spirit T-Shirt", "category": "Apparel", "stock": 22, "unit\_price": 18.00} ]) inventory\_data.to\_csv(INVENTORY\_FILE, index=False) # Initialize RevTrack Sales History if not os.path.exists(SALES\_FILE): sales\_data = pd.DataFrame(columns=["transaction\_id", "timestamp", "item\_id", "quantity", "total\_price", "payment\_method"]) sales\_data.to\_csv(SALES\_FILE, index=False) init\_databases() # --- HEADER &amp; NAVIGATION --- st.title("🛡️ Trojan Market Management Dashboard") st.caption("Simsbury High School DECA | Standalone Custom Operations Hub (Non-Google)") # Explicit tab variable assignment to eliminate IndexError tab1, tab2, tab3, tab4, tab5 = st.tabs([ "🕒 ID Scanner &amp; Time Clock", "📋 Custom Sheets Database", "📦 RevTrack POS &amp; Inventory", "📊 Advisor &amp; Honors Analytics", "🪪 ID Card Generator" ]) # ========================================== # TAB 1: ID SCANNER &amp; TIME LOGGING # ========================================== with tab1: st.header("Student ID Barcode Time Clock") st.info("Scan student ID card barcode (e.g. SIM1001) using a USB barcode scanner or type manually.") roster\_df = pd.read\_csv(ROSTER\_FILE) shifts\_df = pd.read\_csv(SHIFTS\_FILE) col1, col2 = st.columns([5, 6]) with col1: scanned\_barcode = st.text\_input("⚡ Barcode Input Feed (Scan Card Here):", key="barcode\_input") shift\_type = st.selectbox("Select Shift Type:", ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"]) if scanned\_barcode: scanned\_barcode = scanned\_barcode.strip().upper() student\_match = roster\_df[roster\_df["student\_id"] == scanned\_barcode] if not student\_match.empty: student\_row = student\_match.iloc student\_name = f"{student\_row['first\_name']} {student\_row['last\_name']}" st.success(f"ID Verified: \*\*{student\_name}\*\* ({student\_row['track']})") # Check for active shift using bitwise AND (&amp;) active\_shifts = shifts\_df[(shifts\_df["student\_id"] == scanned\_barcode) &amp; (shifts\_df["status"] == "ACTIVE")] if active\_shifts.empty: # CHECK IN if st.button(f"🔴 Clock IN for {student\_name}"): new\_shift = { "student\_id": scanned\_barcode, "name": student\_name, "check\_in": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "check\_out": "", "hours\_logged": 0.0, "shift\_type": shift\_type, "status": "ACTIVE" } shifts\_df = pd.concat([shifts\_df, pd.DataFrame([new\_shift])], ignore\_index=True) shifts\_df.to\_csv(SHIFTS\_FILE, index=False) st.balloons() st.success(f"Clocked IN successfully at {datetime.datetime.now().strftime('%H:%M:%S')}!") st.rerun() else: # CHECK OUT check\_in\_time\_str = active\_shifts.iloc["check\_in"] check\_in\_dt = datetime.datetime.strptime(check\_in\_time\_str, "%Y-%m-%d %H:%M:%S") now\_dt = datetime.datetime.now() duration\_hrs = round((now\_dt - check\_in\_dt).total\_seconds() / 3600.0, 2) st.warning(f"Currently Clocked IN since: {check\_in\_time\_str}") if st.button(f"🟢 Clock OUT for {student\_name} ({duration\_hrs} hrs)"): idx = active\_shifts.index shifts\_df.at[idx, "check\_out"] = now\_dt.strftime("%Y-%m-%d %H:%M:%S") shifts\_df.at[idx, "hours\_logged"] = max(duration\_hrs, 1.0) shifts\_df.at[idx, "status"] = "COMPLETED" shifts\_df.to\_csv(SHIFTS\_FILE, index=False) st.success(f"Clocked OUT! Logged {max(duration\_hrs, 1.0)} shift hours.") st.rerun() else: st.error("Student ID barcode not found in roster database.") with col2: st.subheader("Currently Clocked In") active\_now = shifts\_df[shifts\_df["status"] == "ACTIVE"] if not active\_now.empty: st.dataframe(active\_now[["name", "shift\_type", "check\_in"]], use\_container\_width=True) else: st.caption("No students currently clocked in.") # ========================================== # TAB 2: CUSTOM SHEETS DATABASE # ========================================== with tab2: st.header("Custom Sheets Datastore Manager") st.caption("Direct spreadsheet viewer and editor operating independently of Google Sheets.") sheet\_option = st.radio("Select Sheet to Manage:", ["Student Roster", "Shift Logs", "Master Inventory"], horizontal=True) if sheet\_option == "Student Roster": df = pd.read\_csv(ROSTER\_FILE) edited\_df = st.data\_editor(df, num\_rows="dynamic", use\_container\_width=True) if st.button("💾 Save Roster Changes"): edited\_df.to\_csv(ROSTER\_FILE, index=False) st.success("Roster updated successfully!") elif sheet\_option == "Shift Logs": df = pd.read\_csv(SHIFTS\_FILE) edited\_df = st.data\_editor(df, num\_rows="dynamic", use\_container\_width=True) if st.button("💾 Save Shift Log Changes"): edited\_df.to\_csv(SHIFTS\_FILE, index=False) st.success("Shift records updated successfully!") elif sheet\_option == "Master Inventory": df = pd.read\_csv(INVENTORY\_FILE) edited\_df = st.data\_editor(df, num\_rows="dynamic", use\_container\_width=True) if st.button("💾 Save Inventory Changes"): edited\_df.to\_csv(INVENTORY\_FILE, index=False) st.success("Inventory records updated successfully!") # ========================================== # TAB 3: REVTRACK POS &amp; REAL-TIME INVENTORY # ========================================== with tab3: st.header("RevTrack POS Terminal &amp; Auto-Deduction") st.caption("Simulates sales transactions executed on store iPads/tap-to-pay devices.") inventory\_df = pd.read\_csv(INVENTORY\_FILE) sales\_df = pd.read\_csv(SALES\_FILE) c1, c2 = st.columns([5, 6]) with c1: st.subheader("Process New Sale") item\_selected = st.selectbox("Select Purchased Item:", inventory\_df["item\_name"].tolist()) qty\_sold = st.number\_input("Quantity Sold:", min\_value=1, max\_value=50, value=1) pay\_method = st.selectbox("Payment Method:", ["RevTrack Tap-to-Pay (iPad)", "Cash Box"]) item\_match = inventory\_df[inventory\_df["item\_name"] == item\_selected] if not item\_match.empty: item\_row = item\_match.iloc total\_cost = qty\_sold \* item\_row["unit\_price"] st.markdown(f"\*\*Total Transaction Price:\*\* \`${total\_cost:.2f}\`") if st.button("💳 Confirm RevTrack Sale"): if item\_row["stock"] &gt;= qty\_sold: idx = item\_match.index inventory\_df.at[idx, "stock"] -= qty\_sold inventory\_df.to\_csv(INVENTORY\_FILE, index=False) new\_sale = { "transaction\_id": f"REV-{datetime.datetime.now().strftime('%M%S')}", "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "item\_id": item\_row["item\_id"], "quantity": qty\_sold, "total\_price": total\_cost, "payment\_method": pay\_method } sales\_df = pd.concat([sales\_df, pd.DataFrame([new\_sale])], ignore\_index=True) sales\_df.to\_csv(SALES\_FILE, index=False) st.success(f"Sale Processed! Stock for '{item\_selected}' auto-updated to {inventory\_df.at[idx, 'stock']}.") st.rerun() else: st.error("Insufficient stock to process transaction!") with c2: st.subheader("Live Inventory Levels") st.dataframe(inventory\_df[["item\_id", "item\_name", "stock", "unit\_price"]], use\_container\_width=True) low\_stock = inventory\_df[inventory\_df["stock"] &lt; 10] if not low\_stock.empty: st.warning(f"⚠️ Low Stock Alert for: {', '.join(low\_stock['item\_name'].tolist())}") # ========================================== # TAB 4: ADVISOR &amp; HONORS TRACK ANALYTICS # ========================================== with tab4: st.header("DECA Advisor &amp; Course Progress Dashboard") st.caption("Tracks required honors and course shift hours (10/20 Hours Target) for Mr. Stanwood.") roster\_df = pd.read\_csv(ROSTER\_FILE) shifts\_df = pd.read\_csv(SHIFTS\_FILE) completed\_shifts = shifts\_df[shifts\_df["status"] == "COMPLETED"] hours\_by\_student = completed\_shifts.groupby("student\_id")["hours\_logged"].sum().reset\_index() summary\_df = pd.merge(roster\_df, hours\_by\_student, on="student\_id", how="left").fillna(0) summary\_df["progress\_%"] = ((summary\_df["hours\_logged"] / summary\_df["req\_hours"]) \* 100).round(1) m1, m2, m3 = st.columns(3) m1.metric("Total Students Enrolled", len(summary\_df)) m2.metric("Total Shift Hours Completed", summary\_df["hours\_logged"].sum()) m3.metric("Avg Completion Rate", f"{summary\_df['progress\_%'].mean():.1f}%") st.subheader("Student Hours Breakdown") st.dataframe(summary\_df[["student\_id", "first\_name", "last\_name", "course", "track", "hours\_logged", "req\_hours", "progress\_%"]], use\_container\_width=True) # ========================================== # TAB 5: ID CARD GENERATOR # ========================================== with tab5: st.header("Custom Student ID Card Template") st.caption("Generates ID templates containing student photos, barcode numbers, and CT emergency contacts.") roster\_df = pd.read\_csv(ROSTER\_FILE) selected\_id = st.selectbox("Select Student for ID Card Generation:", roster\_df["student\_id"].tolist()) student\_match = roster\_df[roster\_df["student\_id"] == selected\_id] if not student\_match.empty: student = student\_match.iloc st.markdown("---") st.subheader("🪪 Generated ID Card Preview") card\_col1, card\_col2 = st.columns(2) with card\_col1: st.markdown("### \*\*FRONT OF CARD\*\*") st.markdown(f""" <div> <h3>SIMSBURY HIGH SCHOOL</h3> <p>Trojan Market / DECA Staff ID</p> <hr /> <h4><b>Name:</b> {student['first\_name']} {student['last\_name']}</h4> <p><b>Course/Role:</b> {student['course']} ({student['track']})</p> <p><b>Student ID:</b> {student['student\_id']}</p> <div> |||| | ||||| ||| || ||||||<br />{student['student\_id']} </div> </div> """, unsafe\_allow\_html=True) with card\_col2: st.markdown("### \*\*BACK OF CARD (CT Law Mandate)\*\*") st.markdown(""" <div> <h5>EMERGENCY &amp; CRISIS CONTACTS</h5> <hr /> <ul> <li><b>Suicide &amp; Crisis Lifeline:</b> Call or Text 988</li> <li><b>Police / Fire / Ambulance:</b> 911</li> <li><b>Mobile Mental Health &amp; Community Resources:</b> 211</li> <li><b>Westport/Simsbury Together Info:</b> QR / Online Portal</li> </ul> </div> """, unsafe\_allow\_html=True)
+import os
+import datetime
+
+import pandas as pd
+import streamlit as st
+
+# --- PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="Trojan Market - Store Management System",
+    page_icon="🛡️",
+    layout="wide",
+)
+
+# --- FILE STORAGE ---
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROSTER_FILE = os.path.join(ROOT_DIR, "roster.csv")
+SHIFTS_FILE = os.path.join(ROOT_DIR, "shifts.csv")
+INVENTORY_FILE = os.path.join(ROOT_DIR, "inventory.csv")
+SALES_FILE = os.path.join(ROOT_DIR, "sales.csv")
+
+
+def load_or_create_df(file_path: str, default_df: pd.DataFrame) -> pd.DataFrame:
+    if not os.path.exists(file_path):
+        default_df.to_csv(file_path, index=False)
+        return default_df.copy()
+
+    try:
+        df = pd.read_csv(file_path)
+    except Exception:
+        default_df.to_csv(file_path, index=False)
+        return default_df.copy()
+
+    return df
+
+
+def save_df(file_path: str, df: pd.DataFrame) -> None:
+    df.to_csv(file_path, index=False)
+
+
+# --- SAMPLE DATA ---
+def get_default_roster() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "student_id": "SIM1001",
+                "first_name": "Caroline",
+                "last_name": "Fair",
+                "course": "1-Entrepreneurship",
+                "track": "DECA President",
+                "req_hours": 20,
+            },
+            {
+                "student_id": "SIM1002",
+                "first_name": "Elizabeth",
+                "last_name": "Cadoff",
+                "course": "6-Marketing",
+                "track": "VP-School Store",
+                "req_hours": 20,
+            },
+            {
+                "student_id": "SIM1003",
+                "first_name": "Radha",
+                "last_name": "Bansal",
+                "course": "1-Entrepreneurship",
+                "track": "VP-Marketing",
+                "req_hours": 20,
+            },
+            {
+                "student_id": "SIM1004",
+                "first_name": "Liam",
+                "last_name": "Ricciardelli",
+                "course": "2-Marketing",
+                "track": "Officer",
+                "req_hours": 10,
+            },
+            {
+                "student_id": "SIM1005",
+                "first_name": "Julian",
+                "last_name": "Mass",
+                "course": "2-Marketing",
+                "track": "Honors: Store",
+                "req_hours": 10,
+            },
+            {
+                "student_id": "SIM1006",
+                "first_name": "Henry",
+                "last_name": "Pfeiffer",
+                "course": "6-Marketing",
+                "track": "ICDC",
+                "req_hours": 10,
+            },
+            {
+                "student_id": "SIM1007",
+                "first_name": "Caleb",
+                "last_name": "Deems",
+                "course": "7-SEM",
+                "track": "Honors: Store",
+                "req_hours": 10,
+            },
+            {
+                "student_id": "SIM1008",
+                "first_name": "Olivia",
+                "last_name": "Campasano",
+                "course": "Accounting 2",
+                "track": "Store",
+                "req_hours": 10,
+            },
+        ]
+    )
+
+
+def get_default_shifts() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "student_id",
+            "name",
+            "check_in",
+            "check_out",
+            "hours_logged",
+            "shift_type",
+            "status",
+        ]
+    )
+
+
+def get_default_inventory() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"item_id": "SKU-001", "item_name": "Fresh Baked Cookies", "category": "Food", "stock": 48, "unit_price": 1.50},
+            {"item_id": "SKU-002", "item_name": "Fresh Popcorn Bag", "category": "Food", "stock": 30, "unit_price": 2.00},
+            {"item_id": "SKU-003", "item_name": "Slushy (Full Size)", "category": "Beverage", "stock": 25, "unit_price": 2.50},
+            {"item_id": "SKU-004", "item_name": "SHS Trojan Hoodie", "category": "Apparel", "stock": 15, "unit_price": 35.00},
+            {"item_id": "SKU-005", "item_name": "Trojan Spirit T-Shirt", "category": "Apparel", "stock": 22, "unit_price": 18.00},
+        ]
+    )
+
+
+def get_default_sales() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=["transaction_id", "timestamp", "item_id", "quantity", "total_price", "payment_method"]
+    )
+
+
+roster_df = load_or_create_df(ROSTER_FILE, get_default_roster())
+shifts_df = load_or_create_df(SHIFTS_FILE, get_default_shifts())
+inventory_df = load_or_create_df(INVENTORY_FILE, get_default_inventory())
+sales_df = load_or_create_df(SALES_FILE, get_default_sales())
+
+# --- UI HELPERS ---
+
+
+def student_lookup(student_id: str) -> pd.Series | None:
+    match = roster_df[roster_df["student_id"].str.upper() == student_id.strip().upper()]
+    if match.empty:
+        return None
+    return match.iloc[0]
+
+
+st.title("Trojan Market Management Dashboard")
+st.caption("Simsbury High School DECA | Standalone Customs Hub (Non-Google)")
+
+
+tabs = st.tabs([
+    "🛡️ ID & Time Clock",
+    "📊 Custom Sheets Database",
+    "💸 RevTrack POS & Inventory",
+    "📈 DECA Advisor Dashboard",
+    "🪪 ID Card Generator",
+])
+
+with tabs[0]:
+    st.header("Student ID Barcode Time Clock")
+    st.info("Scan student ID card barcode (e.g. SIM1001) using a USB barcode scanner or type manually.")
+
+    scanned_barcode = st.text_input("Barcode Input Feed (Scan Card Here):", key="barcode_input")
+    shift_type = st.selectbox(
+        "Select Shift Type:",
+        ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"],
+    )
+
+    if scanned_barcode:
+        student = student_lookup(scanned_barcode)
+        if student is None:
+            st.error("Student ID barcode not found in roster database.")
+        else:
+            student_name = f"{student['first_name']} {student['last_name']}"
+            st.success(f"ID Verified: {student_name} ({student['track']})")
+
+            active_shifts = shifts_df[
+                (shifts_df["student_id"] == student["student_id"]) & (shifts_df["status"] == "ACTIVE")
+            ]
+
+            if active_shifts.empty:
+                if st.button(f"Clock IN for {student_name}"):
+                    now = datetime.datetime.now()
+                    new_shift = {
+                        "student_id": student["student_id"],
+                        "name": student_name,
+                        "check_in": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "check_out": "",
+                        "hours_logged": 0.0,
+                        "shift_type": shift_type,
+                        "status": "ACTIVE",
+                    }
+                    shifts_df = pd.concat([shifts_df, pd.DataFrame([new_shift])], ignore_index=True)
+                    save_df(SHIFTS_FILE, shifts_df)
+                    st.success(f"Clocked IN successfully at {now.strftime('%H:%M:%S')}!")
+                    st.rerun()
+            else:
+                check_in_time = active_shifts.iloc[0]["check_in"]
+                if st.button(f"Clock OUT for {student_name}"):
+                    idx = active_shifts.index[0]
+                    checked_in = datetime.datetime.strptime(check_in_time, "%Y-%m-%d %H:%M:%S")
+                    now = datetime.datetime.now()
+                    duration_hours = max((now - checked_in).total_seconds() / 3600, 1.0)
+                    shifts_df.at[idx, "check_out"] = now.strftime("%Y-%m-%d %H:%M:%S")
+                    shifts_df.at[idx, "hours_logged"] = round(duration_hours, 2)
+                    shifts_df.at[idx, "status"] = "COMPLETED"
+                    save_df(SHIFTS_FILE, shifts_df)
+                    st.success(f"Clocked OUT! Logged {duration_hours:.1f} hours.")
+                    st.rerun()
+
+    st.subheader("Currently Clocked In")
+    active_now = shifts_df[shifts_df["status"] == "ACTIVE"]
+    if active_now.empty:
+        st.caption("No students currently clocked in.")
+    else:
+        st.dataframe(active_now[["student_id", "name", "check_in", "shift_type"]], use_container_width=True)
+
+with tabs[1]:
+    st.header("Custom Sheets Database Manager")
+    st.caption("Direct spreadsheet viewer and editor operating independently of Google Sheets.")
+
+    sheet_option = st.radio(
+        "Select Sheet to Manage:",
+        ["Student Roster", "Shift Logs", "Master Inventory"],
+        horizontal=True,
+    )
+
+    if sheet_option == "Student Roster":
+        df = roster_df.copy()
+    elif sheet_option == "Shift Logs":
+        df = shifts_df.copy()
+    else:
+        df = inventory_df.copy()
+
+    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+    if st.button("Save Changes"):
+        if sheet_option == "Student Roster":
+            roster_df = edited_df.copy()
+            save_df(ROSTER_FILE, roster_df)
+        elif sheet_option == "Shift Logs":
+            shifts_df = edited_df.copy()
+            save_df(SHIFTS_FILE, shifts_df)
+        else:
+            inventory_df = edited_df.copy()
+            save_df(INVENTORY_FILE, inventory_df)
+        st.success("Changes saved successfully.")
+
+with tabs[2]:
+    st.header("RevTrack POS & Real-Time Inventory")
+    st.caption("Simulate sales transactions executed on store iPads and tap-to-pay devices.")
+
+    inventory_df = load_or_create_df(INVENTORY_FILE, get_default_inventory())
+    sales_df = load_or_create_df(SALES_FILE, get_default_sales())
+
+    item_options = inventory_df["item_name"].tolist()
+    selected_item = st.selectbox("Select Purchased Item:", item_options)
+    quantity_sold = st.number_input("Quantity Sold:", min_value=1, max_value=50, value=1)
+    payment_method = st.selectbox("Payment Method:", ["RevTrack Tap-to-Pay (iPad)", "Cash Box"])
+
+    item_row = inventory_df[inventory_df["item_name"] == selected_item].iloc[0]
+    total_cost = quantity_sold * float(item_row["unit_price"])
+    st.markdown(f"**Total Transaction Price:** ${total_cost:.2f}")
+
+    if st.button("Confirm RevTrack Sale"):
+        if int(item_row["stock"]) >= quantity_sold:
+            idx = inventory_df.index[inventory_df["item_name"] == selected_item][0]
+            inventory_df.at[idx, "stock"] = int(item_row["stock"]) - quantity_sold
+            save_df(INVENTORY_FILE, inventory_df)
+
+            new_sale = {
+                "transaction_id": f"REV-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "item_id": item_row["item_id"],
+                "quantity": quantity_sold,
+                "total_price": total_cost,
+                "payment_method": payment_method,
+            }
+            sales_df = pd.concat([sales_df, pd.DataFrame([new_sale])], ignore_index=True)
+            save_df(SALES_FILE, sales_df)
+            st.success(f"Sale processed! Stock for '{selected_item}' auto-updated.")
+        else:
+            st.error("Insufficient stock to process transaction!")
+
+    st.subheader("Live Inventory Levels")
+    st.dataframe(
+        inventory_df[["item_id", "item_name", "stock", "unit_price"]],
+        use_container_width=True,
+    )
+
+with tabs[3]:
+    st.header("DECA Advisor & Course Progress Dashboard")
+    st.caption("Tracks required hours and completion progress across student participation.")
+
+    completed_shifts = shifts_df[shifts_df["status"] == "COMPLETED"].copy()
+    if not completed_shifts.empty:
+        completed_shifts["hours_logged"] = pd.to_numeric(completed_shifts["hours_logged"], errors="coerce").fillna(0)
+        hours_by_student = completed_shifts.groupby("student_id")["hours_logged"].sum().reset_index()
+        summary_df = roster_df.merge(hours_by_student, on="student_id", how="left").fillna({"hours_logged": 0})
+        summary_df["progress_%"] = ((summary_df["hours_logged"] / summary_df["req_hours"]) * 100).round(1)
+    else:
+        summary_df = roster_df.copy()
+        summary_df["hours_logged"] = 0.0
+        summary_df["progress_%"] = 0.0
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Students Enrolled", len(summary_df))
+    col2.metric("Total Shift Hours Completed", int(summary_df["hours_logged"].sum()))
+    col3.metric("Avg Completion Rate", f"{summary_df['progress_%'].mean():.1f}%")
+
+    st.subheader("Student Hours Breakdown")
+    st.dataframe(
+        summary_df[["student_id", "first_name", "last_name", "course", "track", "hours_logged", "req_hours", "progress_%"]],
+        use_container_width=True,
+    )
+
+with tabs[4]:
+    st.header("Custom Student ID Card Template")
+    st.caption("Generates ID templates containing student photos, barcode numbers, and emergency contacts.")
+
+    selected_student_id = st.selectbox("Select Student for ID Card Generation:", roster_df["student_id"].tolist())
+    selected_student = roster_df[roster_df["student_id"] == selected_student_id].iloc[0]
+    st.markdown("---")
+    st.markdown(
+        f"""
+        <div style="background:#f4f4f4; border:2px solid #d9d9d9; border-radius:12px; padding:20px; max-width:650px;">
+            <h3 style="margin:0;">SIMSBURY HIGH SCHOOL</h3>
+            <p style="margin:0;">Trojan Market / DECA Staff ID</p>
+            <hr>
+            <h4 style="margin:0;">Name: {selected_student['first_name']} {selected_student['last_name']}</h4>
+            <p><b>Course/Role:</b> {selected_student['course']} ({selected_student['track']})</p>
+            <p><b>Student ID:</b> {selected_student['student_id']}</p>
+            <div style="border:1px solid #111; padding:12px; border-radius:8px; background:white;">BARCODE: {selected_student['student_id']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.subheader("Emergency Contact Info")
+    st.markdown(
+        """
+        <ul>
+            <li><b>Suicide & Crisis Lifeline:</b> Call or Text 988</li>
+            <li><b>Police / Fire / Ambulance:</b> 911</li>
+            <li><b>Mobile Mental Health & Community Resources:</b> 211</li>
+            <li><b>Westport / Simsbury Together Info:</b> QR / Online Portal</li>
+        </ul>
+        """,
+        unsafe_allow_html=True,
+    )
+
+st.write("")
