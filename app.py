@@ -1,3 +1,4 @@
+```
 import streamlit as st
 import pandas as pd
 import datetime
@@ -76,7 +77,7 @@ with tabs:
     roster_df = pd.read_csv(ROSTER_FILE)
     shifts_df = pd.read_csv(SHIFTS_FILE)
 
-    col1, col2 = st.columns([1, 2])
+    col1, col2 = st.columns([3, 4])
     
     with col1:
         scanned_barcode = st.text_input("⚡ Barcode Input Feed (Scan Card Here):", key="barcode_input")
@@ -91,7 +92,7 @@ with tabs:
                 st.success(f"ID Verified: **{student_name}** ({student_match.iloc['track']})")
 
                 # Check if currently active shift exists
-                active_shifts = shifts_df[(shifts_df["student_id"] == scanned_barcode) &amp (shifts_df["status"] == "ACTIVE")]
+                active_shifts = shifts_df[(shifts_df["student_id"] == scanned_barcode) &amp; (shifts_df["status"] == "ACTIVE")]
 
                 if active_shifts.empty:
                     # CHECK IN
@@ -121,7 +122,7 @@ with tabs:
                     if st.button(f"🟢 Clock OUT for {student_name} ({duration_hrs} hrs)"):
                         idx = active_shifts.index
                         shifts_df.at[idx, "check_out"] = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-                        shifts_df.at[idx, "hours_logged"] = max(duration_hrs, 1.0) # Default minimum 1-hr shift credit
+                        shifts_df.at[idx, "hours_logged"] = max(duration_hrs, 1.0)
                         shifts_df.at[idx, "status"] = "COMPLETED"
                         shifts_df.to_csv(SHIFTS_FILE, index=False)
                         st.success(f"Clocked OUT! Logged {max(duration_hrs, 1.0)} shift hours.")
@@ -140,7 +141,7 @@ with tabs:
 # ==========================================
 # TAB 2: CUSTOM SHEETS DATABASE
 # ==========================================
-with tabs[2]:
+with tabs[3]:
     st.header("Custom Sheets Datastore Manager")
     st.caption("Direct spreadsheet viewer and editor operating independently of Google Sheets.")
 
@@ -170,14 +171,14 @@ with tabs[2]:
 # ==========================================
 # TAB 3: REVTRACK POS &amp; REAL-TIME INVENTORY
 # ==========================================
-with tabs[1]:
+with tabs[4]:
     st.header("RevTrack POS Terminal &amp; Auto-Deduction")
     st.caption("Simulates sales transactions executed on store iPads/tap-to-pay devices.")
 
     inventory_df = pd.read_csv(INVENTORY_FILE)
     sales_df = pd.read_csv(SALES_FILE)
 
-    c1, c2 = st.columns([2])
+    c1, c2 = st.columns([3])
 
     with c1:
         st.subheader("Process New Sale")
@@ -191,7 +192,7 @@ with tabs[1]:
         st.markdown(f"**Total Transaction Price:** `${total_cost:.2f}`")
 
         if st.button("💳 Confirm RevTrack Sale"):
-            if item_row["stock"] &gt == qty_sold:
+            if item_row["stock"] &gt;= qty_sold:
                 # Deduct Inventory Stock
                 idx = inventory_df[inventory_df["item_name"] == item_selected].index
                 inventory_df.at[idx, "stock"] -= qty_sold
@@ -219,14 +220,14 @@ with tabs[1]:
         st.dataframe(inventory_df[["item_id", "item_name", "stock", "unit_price"]], use_container_width=True)
         
         # Low Stock Warnings
-        low_stock = inventory_df[inventory_df["stock"] &lt 10]
+        low_stock = inventory_df[inventory_df["stock"] &lt; 10]
         if not low_stock.empty:
             st.warning(f"⚠️ Low Stock Alert for: {', '.join(low_stock['item_name'].tolist())}")
 
 # ==========================================
 # TAB 4: ADVISOR &amp; HONORS TRACK ANALYTICS
 # ==========================================
-with tabs[7]:
+with tabs[5]:
     st.header("DECA Advisor &amp; Course Progress Dashboard")
     st.caption("Tracks required honors and course shift hours (10/20 Hours Target) for Mr. Stanwood.")
 
@@ -251,7 +252,7 @@ with tabs[7]:
 # ==========================================
 # TAB 5: ID CARD GENERATOR
 # ==========================================
-with tabs[8]:
+with tabs[6]:
     st.header("Custom Student ID Card Template")
     st.caption("Generates ID templates containing student photos, barcode numbers, and CT emergency contacts.")
 
@@ -295,3 +296,5 @@ with tabs[8]:
             </ul>
         </div>
         """, unsafe_allow_html=True)
+
+```
