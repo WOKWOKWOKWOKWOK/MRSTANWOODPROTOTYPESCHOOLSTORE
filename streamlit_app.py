@@ -19,6 +19,25 @@ INVENTORY_FILE = os.path.join(ROOT_DIR, "inventory.csv")
 SALES_FILE = os.path.join(ROOT_DIR, "sales.csv")
 
 
+def normalize_dataframe(df: pd.DataFrame, numeric_columns=None, text_columns=None) -> pd.DataFrame:
+    """Normalize columns so pandas doesn't crash when assigning strings into blank numeric columns."""
+    if df is None:
+        return df
+
+    numeric_columns = numeric_columns or []
+    text_columns = text_columns or []
+
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    for col in text_columns:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda value: "" if pd.isna(value) else str(value))
+
+    return df
+
+
 def load_or_create_df(file_path: str, default_df: pd.DataFrame) -> pd.DataFrame:
     if not os.path.exists(file_path):
         default_df.to_csv(file_path, index=False)
@@ -141,13 +160,27 @@ def get_default_sales() -> pd.DataFrame:
     )
 
 
-roster_df = load_or_create_df(ROSTER_FILE, get_default_roster())
-shifts_df = load_or_create_df(SHIFTS_FILE, get_default_shifts())
-inventory_df = load_or_create_df(INVENTORY_FILE, get_default_inventory())
-sales_df = load_or_create_df(SALES_FILE, get_default_sales())
+# Normalize on load so blank CSV values don't create bad float dtypes.
+roster_df = normalize_dataframe(
+    load_or_create_df(ROSTER_FILE, get_default_roster()),
+    numeric_columns=["req_hours"],
+)
+shifts_df = normalize_dataframe(
+    load_or_create_df(SHIFTS_FILE, get_default_shifts()),
+    numeric_columns=["hours_logged"],
+    text_columns=["student_id", "name", "check_in", "check_out", "shift_type", "status"],
+)
+inventory_df = normalize_dataframe(
+    load_or_create_df(INVENTORY_FILE, get_default_inventory()),
+    numeric_columns=["stock", "unit_price"],
+)
+sales_df = normalize_dataframe(
+    load_or_create_df(SALES_FILE, get_default_sales()),
+    numeric_columns=["quantity", "total_price"],
+    text_columns=["transaction_id", "timestamp", "item_id", "payment_method"],
+)
 
 # --- UI HELPERS ---
-
 
 def student_lookup(student_id: str) -> pd.Series | None:
     match = roster_df[roster_df["student_id"].str.upper() == student_id.strip().upper()]
@@ -203,6 +236,11 @@ with tabs[0]:
                         "status": "ACTIVE",
                     }
                     shifts_df = pd.concat([shifts_df, pd.DataFrame([new_shift])], ignore_index=True)
+                    shifts_df = normalize_dataframe(
+                        shifts_df,
+                        numeric_columns=["hours_logged"],
+                        text_columns=["student_id", "name", "check_in", "check_out", "shift_type", "status"],
+                    )
                     save_df(SHIFTS_FILE, shifts_df)
                     st.success(f"Clocked IN successfully at {now.strftime('%H:%M:%S')}!")
                     st.rerun()
@@ -216,6 +254,11 @@ with tabs[0]:
                     shifts_df.at[idx, "check_out"] = now.strftime("%Y-%m-%d %H:%M:%S")
                     shifts_df.at[idx, "hours_logged"] = round(duration_hours, 2)
                     shifts_df.at[idx, "status"] = "COMPLETED"
+                    shifts_df = normalize_dataframe(
+                        shifts_df,
+                        numeric_columns=["hours_logged"],
+                        text_columns=["student_id", "name", "check_in", "check_out", "shift_type", "status"],
+                    )
                     save_df(SHIFTS_FILE, shifts_df)
                     st.success(f"Clocked OUT! Logged {duration_hours:.1f} hours.")
                     st.rerun()
@@ -247,13 +290,17 @@ with tabs[1]:
     edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
     if st.button("Save Changes"):
         if sheet_option == "Student Roster":
-            roster_df = edited_df.copy()
+            roster_df = normalize_dataframe(edited_df.copy(), numeric_columns=["req_hours"])
             save_df(ROSTER_FILE, roster_df)
         elif sheet_option == "Shift Logs":
-            shifts_df = edited_df.copy()
+            shifts_df = normalize_dataframe(
+                edited_df.copy(),
+                numeric_columns=["hours_logged"],
+                text_columns=["student_id", "name", "check_in", "check_out", "shift_type", "status"],
+            )
             save_df(SHIFTS_FILE, shifts_df)
         else:
-            inventory_df = edited_df.copy()
+            inventory_df = normalize_dataframe(edited_df.copy(), numeric_columns=["stock", "unit_price"])
             save_df(INVENTORY_FILE, inventory_df)
         st.success("Changes saved successfully.")
 
@@ -261,8 +308,15 @@ with tabs[2]:
     st.header("RevTrack POS & Real-Time Inventory")
     st.caption("Simulate sales transactions executed on store iPads and tap-to-pay devices.")
 
-    inventory_df = load_or_create_df(INVENTORY_FILE, get_default_inventory())
-    sales_df = load_or_create_df(SALES_FILE, get_default_sales())
+    inventory_df = normalize_dataframe(
+        load_or_create_df(INVENTORY_FILE, get_default_inventory()),
+        numeric_columns=["stock", "unit_price"],
+    )
+    sales_df = normalize_dataframe(
+        load_or_create_df(SALES_FILE, get_default_sales()),
+        numeric_columns=["quantity", "total_price"],
+        text_columns=["transaction_id", "timestamp", "item_id", "payment_method"],
+    )
 
     item_options = inventory_df["item_name"].tolist()
     selected_item = st.selectbox("Select Purchased Item:", item_options)
@@ -288,6 +342,11 @@ with tabs[2]:
                 "payment_method": payment_method,
             }
             sales_df = pd.concat([sales_df, pd.DataFrame([new_sale])], ignore_index=True)
+            sales_df = normalize_dataframe(
+                sales_df,
+                numeric_columns=["quantity", "total_price"],
+                text_columns=["transaction_id", "timestamp", "item_id", "payment_method"],
+            )
             save_df(SALES_FILE, sales_df)
             st.success(f"Sale processed! Stock for '{selected_item}' auto-updated.")
         else:
