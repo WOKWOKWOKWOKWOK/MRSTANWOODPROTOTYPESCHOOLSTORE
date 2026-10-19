@@ -17,7 +17,7 @@ INVENTORY_FILE = "inventory.csv"
 SALES_FILE = "revtrack_sales.csv"
 
 def init_databases():
-    # Initialize Student Roster with SHS DECA Officers &amp; Course Data
+    # Initialize Student Roster with SHS DECA Officers &amp Course Data
     if not os.path.exists(ROSTER_FILE):
         roster_data = pd.DataFrame([
             {"student_id": "SIM1001", "first_name": "Caroline", "last_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req_hours": 20},
@@ -54,20 +54,20 @@ def init_databases():
 
 init_databases()
 
-# --- HEADER &amp; NAVIGATION ---
+# --- HEADER &amp NAVIGATION ---
 st.title("🛡️ Trojan Market Management Dashboard")
 st.caption("Simsbury High School DECA | Standalone Custom Operations Hub (Non-Google)")
 
 tabs = st.tabs([
-    "🕒 ID Scanner &amp; Time Clock", 
+    "🕒 ID Scanner &amp Time Clock", 
     "📋 Custom Sheets Database", 
-    "📦 RevTrack POS &amp; Inventory", 
-    "📊 Advisor &amp; Honors Analytics",
+    "📦 RevTrack POS &amp Inventory", 
+    "📊 Advisor &amp Honors Analytics",
     "🪪 ID Card Generator"
 ])
 
 # ==========================================
-# TAB 1: ID SCANNER &amp; TIME LOGGING
+# TAB 1: ID SCANNER &amp TIME LOGGING
 # ==========================================
 with tabs:
     st.header("Student ID Barcode Time Clock")
@@ -91,7 +91,7 @@ with tabs:
                 st.success(f"ID Verified: **{student_name}** ({student_match.iloc['track']})")
 
                 # Check if currently active shift exists
-                active_shifts = shifts_df[(shifts_df["student_id"] == scanned_barcode) &amp; (shifts_df["status"] == "ACTIVE")]
+                active_shifts = shifts_df[(shifts_df["student_id"] == scanned_barcode) &amp (shifts_df["status"] == "ACTIVE")]
 
                 if active_shifts.empty:
                     # CHECK IN
@@ -168,10 +168,10 @@ with tabs[3]:
             st.success("Inventory records updated successfully!")
 
 # ==========================================
-# TAB 3: REVTRACK POS &amp; REAL-TIME INVENTORY
+# TAB 3: REVTRACK POS &amp REAL-TIME INVENTORY
 # ==========================================
 with tabs[4]:
-    st.header("RevTrack POS Terminal &amp; Auto-Deduction")
+    st.header("RevTrack POS Terminal &amp Auto-Deduction")
     st.caption("Simulates sales transactions executed on store iPads/tap-to-pay devices.")
 
     inventory_df = pd.read_csv(INVENTORY_FILE)
@@ -191,7 +191,7 @@ with tabs[4]:
         st.markdown(f"**Total Transaction Price:** `${total_cost:.2f}`")
 
         if st.button("💳 Confirm RevTrack Sale"):
-            if item_row["stock"] &gt;= qty_sold:
+            if item_row["stock"] &gt= qty_sold:
                 # Deduct Inventory Stock
                 idx = inventory_df[inventory_df["item_name"] == item_selected].index
                 inventory_df.at[idx, "stock"] -= qty_sold
@@ -219,15 +219,15 @@ with tabs[4]:
         st.dataframe(inventory_df[["item_id", "item_name", "stock", "unit_price"]], use_container_width=True)
         
         # Low Stock Warnings
-        low_stock = inventory_df[inventory_df["stock"] &lt; 10]
+        low_stock = inventory_df[inventory_df["stock"] &lt 10]
         if not low_stock.empty:
             st.warning(f"⚠️ Low Stock Alert for: {', '.join(low_stock['item_name'].tolist())}")
 
 # ==========================================
-# TAB 4: ADVISOR &amp; HONORS TRACK ANALYTICS
+# TAB 4: ADVISOR &amp HONORS TRACK ANALYTICS
 # ==========================================
 with tabs[5]:
-    st.header("DECA Advisor &amp; Course Progress Dashboard")
+    st.header("DECA Advisor &amp Course Progress Dashboard")
     st.caption("Tracks required honors and course shift hours (10/20 Hours Target) for Mr. Stanwood.")
 
     roster_df = pd.read_csv(ROSTER_FILE)
@@ -285,12 +285,12 @@ with tabs[6]:
         st.markdown("### **BACK OF CARD (CT Law Mandate)**")
         st.markdown("""
         <div>
-            <h5>EMERGENCY &amp; CRISIS CONTACTS</h5>
+            <h5>EMERGENCY &amp CRISIS CONTACTS</h5>
             <hr />
             <ul>
-                <li><b>Suicide &amp; Crisis Lifeline:</b> Call or Text 988</li>
+                <li><b>Suicide &amp Crisis Lifeline:</b> Call or Text 988</li>
                 <li><b>Police / Fire / Ambulance:</b> 911</li>
-                <li><b>Mobile Mental Health &amp; Community Resources:</b> 211</li>
+                <li><b>Mobile Mental Health &amp Community Resources:</b> 211</li>
                 <li><b>Westport/Simsbury Together Info:</b> QR / Online Portal</li>
             </ul>
         </div>
