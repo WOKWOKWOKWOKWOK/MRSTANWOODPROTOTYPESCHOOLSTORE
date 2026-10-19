@@ -191,7 +191,7 @@ with tabs[1]:
         st.markdown(f"**Total Transaction Price:** `${total_cost:.2f}`")
 
         if st.button("💳 Confirm RevTrack Sale"):
-            if item_row["stock"] &gt;= qty_sold:
+            if item_row["stock"] &gt= qty_sold:
                 # Deduct Inventory Stock
                 idx = inventory_df[inventory_df["item_name"] == item_selected].index
                 inventory_df.at[idx, "stock"] -= qty_sold
