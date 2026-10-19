@@ -1,4 +1,3 @@
-```
 import streamlit as st
 import pandas as pd
 import datetime
@@ -293,5 +292,3 @@ with tab5:
             </ul>
         </div>
         """, unsafe_allow_html=True)
-
-```
