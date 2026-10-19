@@ -91,7 +91,7 @@ with tabs:
                 st.success(f"ID Verified: **{student_name}** ({student_match.iloc['track']})")
 
                 # Check if currently active shift exists
-                active\_shifts = shifts\_df[(shifts\_df["student\_id"] == scanned\_barcode) &amp; (shifts\_df["status"] == "ACTIVE")]
+                active_shifts = shifts_df[(shifts_df["student_id"] == scanned_barcode) &amp; (shifts_df["status"] == "ACTIVE")]
 
                 if active_shifts.empty:
                     # CHECK IN
