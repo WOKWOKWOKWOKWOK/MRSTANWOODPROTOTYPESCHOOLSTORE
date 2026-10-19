@@ -18,6 +18,46 @@ SHIFTS_FILE = os.path.join(ROOT_DIR, "shifts.csv")
 INVENTORY_FILE = os.path.join(ROOT_DIR, "inventory.csv")
 SALES_FILE = os.path.join(ROOT_DIR, "sales.csv")
 
+# --- REVTRAK INTEGRATION NOTE ---
+# Planned future connection to RevTrak:
+# - RevTrak API credentials / OAuth token for the school store account
+# - Store ID, location ID, and merchant account configuration
+# - API endpoints for product catalog, inventory sync, and sales posting
+# - Webhook or polling strategy for real-time updates
+# - Secret management via environment variables (not committed to repo)
+# - Mapping between local item IDs and RevTrak product IDs / SKUs
+# - Sandbox/test account before production deployment
+# This app is intentionally left ready for integration, but the actual RevTrak
+# connection is intentionally deferred until those credentials and endpoints exist.
+
+
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+    }
+    div[data-testid="stAppViewContainer"] {
+        background: linear-gradient(180deg, #f8fbff 0%, #f1f5f9 100%);
+    }
+    .stTabs [role="tablist"] {
+        gap: 0.5rem;
+    }
+    .stTabs [role="tab"] {
+        border-radius: 10px 10px 0 0;
+        background: #e2e8f0;
+        padding: 0.5rem 1rem;
+    }
+    .stTabs [role="tab"][aria-selected="true"] {
+        background: #1d4ed8;
+        color: white;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def normalize_dataframe(df: pd.DataFrame, numeric_columns=None, text_columns=None) -> pd.DataFrame:
     """Normalize columns so pandas doesn't crash when assigning strings into blank numeric columns."""
@@ -180,8 +220,8 @@ sales_df = normalize_dataframe(
     text_columns=["transaction_id", "timestamp", "item_id", "payment_method"],
 )
 
-# --- UI HELPERS ---
 
+# --- UI HELPERS ---
 def student_lookup(student_id: str) -> pd.Series | None:
     match = roster_df[roster_df["student_id"].str.upper() == student_id.strip().upper()]
     if match.empty:
@@ -189,21 +229,56 @@ def student_lookup(student_id: str) -> pd.Series | None:
     return match.iloc[0]
 
 
-st.title("Trojan Market Management Dashboard")
-st.caption("Simsbury High School DECA | Standalone Customs Hub (Non-Google)")
+st.title("Trojan Market")
+st.caption("Simsbury High School DECA • Store Operations & Hours Dashboard")
+
+with st.sidebar:
+    st.markdown("### Store Controls")
+    st.info("This app supports the school store workflow: ID check, clock in/out, sales, inventory, and advisor reporting.")
+
+    if st.button("Refresh Data"):
+        roster_df = normalize_dataframe(load_or_create_df(ROSTER_FILE, get_default_roster()), numeric_columns=["req_hours"])
+        shifts_df = normalize_dataframe(
+            load_or_create_df(SHIFTS_FILE, get_default_shifts()),
+            numeric_columns=["hours_logged"],
+            text_columns=["student_id", "name", "check_in", "check_out", "shift_type", "status"],
+        )
+        inventory_df = normalize_dataframe(load_or_create_df(INVENTORY_FILE, get_default_inventory()), numeric_columns=["stock", "unit_price"])
+        sales_df = normalize_dataframe(
+            load_or_create_df(SALES_FILE, get_default_sales()),
+            numeric_columns=["quantity", "total_price"],
+            text_columns=["transaction_id", "timestamp", "item_id", "payment_method"],
+        )
+        st.rerun()
+
+    st.markdown("---")
+    st.markdown("### Quick Notes")
+    st.caption("- Student ID scan is used for shift verification")
+    st.caption("- Inventory updates immediately after a sale")
+    st.caption("- CSV files act as the local data store")
+
+
+summary_cols = st.columns(4)
+with summary_cols[0]:
+    st.metric("Students", len(roster_df))
+with summary_cols[1]:
+    st.metric("Active Shifts", int((shifts_df["status"] == "ACTIVE").sum()))
+with summary_cols[2]:
+    st.metric("Items in Stock", int(inventory_df["stock"].sum()))
+with summary_cols[3]:
+    st.metric("Sales Logged", len(sales_df))
 
 
 tabs = st.tabs([
     "🛡️ ID & Time Clock",
-    "📊 Custom Sheets Database",
-    "💸 RevTrack POS & Inventory",
-    "📈 DECA Advisor Dashboard",
-    "🪪 ID Card Generator",
+    "📊 Sheet Manager",
+    "💸 POS & Inventory",
+    "📈 Advisor Dashboard",
 ])
 
 with tabs[0]:
-    st.header("Student ID Barcode Time Clock")
-    st.info("Scan student ID card barcode (e.g. SIM1001) using a USB barcode scanner or type manually.")
+    st.header("Student ID Verification & Shift Clock")
+    st.info("Scan a student ID barcode or type one manually to verify identity and manage time clock entries.")
 
     scanned_barcode = st.text_input("Barcode Input Feed (Scan Card Here):", key="barcode_input")
     shift_type = st.selectbox(
@@ -272,7 +347,7 @@ with tabs[0]:
 
 with tabs[1]:
     st.header("Custom Sheets Database Manager")
-    st.caption("Direct spreadsheet viewer and editor operating independently of Google Sheets.")
+    st.caption("Direct spreadsheet viewer and editor for the school store data files.")
 
     sheet_option = st.radio(
         "Select Sheet to Manage:",
@@ -305,8 +380,8 @@ with tabs[1]:
         st.success("Changes saved successfully.")
 
 with tabs[2]:
-    st.header("RevTrack POS & Real-Time Inventory")
-    st.caption("Simulate sales transactions executed on store iPads and tap-to-pay devices.")
+    st.header("POS & Real-Time Inventory")
+    st.caption("Simulated point-of-sale checkout tied to stock levels and item sales.")
 
     inventory_df = normalize_dataframe(
         load_or_create_df(INVENTORY_FILE, get_default_inventory()),
@@ -321,20 +396,20 @@ with tabs[2]:
     item_options = inventory_df["item_name"].tolist()
     selected_item = st.selectbox("Select Purchased Item:", item_options)
     quantity_sold = st.number_input("Quantity Sold:", min_value=1, max_value=50, value=1)
-    payment_method = st.selectbox("Payment Method:", ["RevTrack Tap-to-Pay (iPad)", "Cash Box"])
+    payment_method = st.selectbox("Payment Method:", ["Cash Box", "Tap-to-Pay (Future RevTrak)"])
 
     item_row = inventory_df[inventory_df["item_name"] == selected_item].iloc[0]
     total_cost = quantity_sold * float(item_row["unit_price"])
     st.markdown(f"**Total Transaction Price:** ${total_cost:.2f}")
 
-    if st.button("Confirm RevTrack Sale"):
+    if st.button("Confirm Sale"):
         if int(item_row["stock"]) >= quantity_sold:
             idx = inventory_df.index[inventory_df["item_name"] == selected_item][0]
             inventory_df.at[idx, "stock"] = int(item_row["stock"]) - quantity_sold
             save_df(INVENTORY_FILE, inventory_df)
 
             new_sale = {
-                "transaction_id": f"REV-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "transaction_id": f"SALE-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "item_id": item_row["item_id"],
                 "quantity": quantity_sold,
@@ -360,7 +435,7 @@ with tabs[2]:
 
 with tabs[3]:
     st.header("DECA Advisor & Course Progress Dashboard")
-    st.caption("Tracks required hours and completion progress across student participation.")
+    st.caption("Tracks required hours and completion progress across all student participants.")
 
     completed_shifts = shifts_df[shifts_df["status"] == "COMPLETED"].copy()
     if not completed_shifts.empty:
@@ -382,41 +457,6 @@ with tabs[3]:
     st.dataframe(
         summary_df[["student_id", "first_name", "last_name", "course", "track", "hours_logged", "req_hours", "progress_%"]],
         use_container_width=True,
-    )
-
-with tabs[4]:
-    st.header("Custom Student ID Card Template")
-    st.caption("Generates ID templates containing student photos, barcode numbers, and emergency contacts.")
-
-    selected_student_id = st.selectbox("Select Student for ID Card Generation:", roster_df["student_id"].tolist())
-    selected_student = roster_df[roster_df["student_id"] == selected_student_id].iloc[0]
-    st.markdown("---")
-    st.markdown(
-        f"""
-        <div style="background:#f4f4f4; border:2px solid #d9d9d9; border-radius:12px; padding:20px; max-width:650px;">
-            <h3 style="margin:0;">SIMSBURY HIGH SCHOOL</h3>
-            <p style="margin:0;">Trojan Market / DECA Staff ID</p>
-            <hr>
-            <h4 style="margin:0;">Name: {selected_student['first_name']} {selected_student['last_name']}</h4>
-            <p><b>Course/Role:</b> {selected_student['course']} ({selected_student['track']})</p>
-            <p><b>Student ID:</b> {selected_student['student_id']}</p>
-            <div style="border:1px solid #111; padding:12px; border-radius:8px; background:white;">BARCODE: {selected_student['student_id']}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.subheader("Emergency Contact Info")
-    st.markdown(
-        """
-        <ul>
-            <li><b>Suicide & Crisis Lifeline:</b> Call or Text 988</li>
-            <li><b>Police / Fire / Ambulance:</b> 911</li>
-            <li><b>Mobile Mental Health & Community Resources:</b> 211</li>
-            <li><b>Westport / Simsbury Together Info:</b> QR / Online Portal</li>
-        </ul>
-        """,
-        unsafe_allow_html=True,
     )
 
 st.write("")
