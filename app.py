@@ -219,7 +219,7 @@ with tabs[1]:
         st.dataframe(inventory_df[["item_id", "item_name", "stock", "unit_price"]], use_container_width=True)
         
         # Low Stock Warnings
-        low_stock = inventory_df[inventory_df["stock"] &lt; 10]
+        low_stock = inventory_df[inventory_df["stock"] &lt 10]
         if not low_stock.empty:
             st.warning(f"⚠️ Low Stock Alert for: {', '.join(low_stock['item_name'].tolist())}")
 
