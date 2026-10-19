@@ -34,24 +34,102 @@ SALES_FILE = os.path.join(ROOT_DIR, "sales.csv")
 st.markdown(
     """
     <style>
+    /* Dark theme override for the full app */
+    html, body, [data-testid="stAppViewContainer"] {
+        background-color: #0b1120 !important;
+        color: #e5e7eb !important;
+    }
+
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f172a 0%, #111827 100%) !important;
+        border-right: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
     .block-container {
         padding-top: 1.5rem;
         padding-bottom: 2rem;
+        background: #0b1120;
     }
-    div[data-testid="stAppViewContainer"] {
-        background: linear-gradient(180deg, #f8fbff 0%, #f1f5f9 100%);
+
+    /* General typography */
+    h1, h2, h3, h4, h5, h6, p, div, span, label, li, button {
+        color: #e5e7eb !important;
     }
+
+    /* Tabs */
     .stTabs [role="tablist"] {
         gap: 0.5rem;
+        background: transparent;
     }
+
     .stTabs [role="tab"] {
         border-radius: 10px 10px 0 0;
-        background: #e2e8f0;
+        background: #1f2937;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        color: #dbeafe;
         padding: 0.5rem 1rem;
     }
+
     .stTabs [role="tab"][aria-selected="true"] {
+        background: #2563eb;
+        color: white;
+        border-color: #3b82f6;
+    }
+
+    /* Inputs and cards */
+    .stTextInput > div > div, .stSelectbox > div > div, .stNumberInput > div > div,
+    .stRadio > div, .stDataFrame, .stDataEditor, .stMarkdownContainer, .stAlert,
+    .stButton > button, .stDownloadButton > button {
+        background: #111827;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        color: #e5e7eb;
+    }
+
+    .stButton > button {
         background: #1d4ed8;
         color: white;
+        border: none;
+        border-radius: 0.5rem;
+    }
+
+    .stButton > button:hover {
+        background: #2563eb;
+        color: white;
+    }
+
+    .stDataFrame, .stDataEditor {
+        background: #0f172a;
+    }
+
+    [data-testid="stMetricValue"] {
+        color: #f8fafc !important;
+    }
+
+    [data-testid="stMetricLabel"] {
+        color: #cbd5e1 !important;
+    }
+
+    [data-testid="stMetricContainer"] {
+        background: rgba(17, 24, 39, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 0.75rem;
+        padding: 0.75rem;
+    }
+
+    /* Sidebar cards and info blocks */
+    .stInfo, .stSuccess, .stWarning, .stError {
+        background: rgba(30, 41, 59, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    /* Make markdown text readable */
+    .stMarkdown p, .stMarkdown li, .stMarkdown strong, .stMarkdown em {
+        color: #e5e7eb !important;
+    }
+
+    /* Remove the white-ish blank areas from the main app shell */
+    .main .block-container {
+        background: #0b1120;
     }
     </style>
     """,
