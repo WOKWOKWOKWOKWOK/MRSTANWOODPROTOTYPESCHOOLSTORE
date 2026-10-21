@@ -23,13 +23,14 @@ AUDIT_FILE = os.path.join(ROOT_DIR, "audit_logs.csv")
 
 MAX_SHIFT_HOURS = 4.0
 
-# Authorized Admin Account
+# Authorized Admin Accounts
 ADMIN_USERS = [
     "admin.admin"
 ]
 
-# Admin Password (Fallback or fetched from .streamlit/secrets.toml)
+# Passwords (Fallback defaults or fetched from .streamlit/secrets.toml)
 DEFAULT_ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "DECA2026!")
+DEFAULT_KIOSK_PASSWORD = st.secrets.get("KIOSK_PASSWORD", "LOGINDECA2026!")
 
 # --- STYLING (FORCE-HIDE SIDEBAR ON DESKTOP & MOBILE) ---
 st.markdown(
@@ -450,7 +451,7 @@ def student_lookup_by_code(query_val: str) -> pd.Series | None:
 
 
 # ----------------------------------------------------
-# AUTHENTICATION & LOGIN SCREEN (admin.admin REQUIRED)
+# AUTHENTICATION & LOGIN SCREEN
 # ----------------------------------------------------
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
@@ -473,8 +474,8 @@ if not st.session_state["logged_in"]:
         )
         st.write("")
         with st.form(key="login_form"):
-            email_input = st.text_input("Enter Email / Username:", placeholder="admin.admin or signin.org").strip().lower()
-            pass_input = st.text_input("Password (Required for admin.admin):", type="password")
+            email_input = st.text_input("Enter Username / Email:", placeholder="admin.admin or kiosk.org").strip().lower()
+            pass_input = st.text_input("Password:", type="password")
             login_btn = st.form_submit_button("🔑 Sign In to Terminal")
             
         if login_btn:
@@ -496,16 +497,23 @@ if not st.session_state["logged_in"]:
                     st.session_state["is_admin"] = True
                     log_audit_event("ADMIN_LOGIN", f"Admin signed in as: {clean_user}")
                     st.rerun()
-            elif clean_user == "signin.org" or clean_user.endswith("@simsburyschools.net"):
-                # KIOSK MODE LOGIN
-                st.session_state["logged_in"] = True
-                st.session_state["user_email"] = clean_user
-                st.session_state["is_admin"] = False
-                log_audit_event("KIOSK_LOGIN", f"Terminal kiosk signed in: {clean_user}")
-                st.rerun()
+            elif clean_user in ["kiosk.org", "signin.org"] or clean_user.endswith("@simsburyschools.net"):
+                # KIOSK MODE LOGIN WITH PASSWORD CHECK
+                if not pass_input:
+                    st.error("❌ Password is required for Kiosk mode sign-in.")
+                    log_audit_event("FAILED_LOGIN", f"Missing password attempt for kiosk: {clean_user}")
+                elif pass_input != DEFAULT_KIOSK_PASSWORD:
+                    st.error("❌ Incorrect password for Kiosk mode.")
+                    log_audit_event("FAILED_LOGIN", f"Invalid password attempt for kiosk: {clean_user}")
+                else:
+                    st.session_state["logged_in"] = True
+                    st.session_state["user_email"] = clean_user
+                    st.session_state["is_admin"] = False
+                    log_audit_event("KIOSK_LOGIN", f"Terminal kiosk signed in: {clean_user}")
+                    st.rerun()
             else:
                 # REJECT UNRECOGNIZED USERS
-                st.error("❌ Access denied. Enter 'admin.admin' for admin access or 'signin.org' for kiosk terminal mode.")
+                st.error("❌ Access denied. Enter 'admin.admin' for admin access or 'kiosk.org' for kiosk terminal mode.")
                 log_audit_event("REJECTED_LOGIN", f"Attempted sign-in with unrecognized user: {clean_user}")
 
     st.stop()
