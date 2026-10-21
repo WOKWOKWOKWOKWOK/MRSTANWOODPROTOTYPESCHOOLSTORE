@@ -120,55 +120,56 @@ st.markdown(
 
 
 # --- BARCODE KEYCARD RENDERER ---
-def render_barcode_keycard(student_id: str, student_name: str, track: str):
+def render_barcode_keycard(student_id: str, barcode_val: str, student_name: str, track: str, photo_url: str = ""):
+    avatar_html = f'<img src="{photo_url}" style="width: 60px; height: 60px; border-radius: 50%; border: 2px solid #3b82f6; margin-bottom: 8px; object-fit: cover;" />' if photo_url else '<div style="font-size: 32px; margin-bottom: 4px;">👤</div>'
+    
     html_code = f"""
     <div style="
         background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
         border: 2px solid #3b82f6;
         border-radius: 16px;
         padding: 16px;
-        width: 310px;
+        width: 320px;
         text-align: center;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         box-shadow: 0 10px 25px rgba(0,0,0,0.5);
         color: #ffffff;
         margin: auto;
     ">
-        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #93c5fd; font-weight: 700;">
+        <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: #93c5fd; font-weight: 700;">
             SIMSBURY HIGH SCHOOL
         </div>
-        <div style="font-size: 17px; font-weight: 800; color: #f8fafc; margin-bottom: 2px;">
+        <div style="font-size: 16px; font-weight: 800; color: #f8fafc; margin-bottom: 8px;">
             🛡️ TROJAN MARKET PASS
         </div>
-        <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 10px;">
-            MEMBER SIGN-IN KEYTAG
-        </div>
         
-        <div style="background: #ffffff; padding: 10px 6px 2px 6px; border-radius: 10px; display: inline-block; margin-bottom: 10px;">
-            <svg id="barcode_{student_id}"></svg>
-        </div>
-        
+        {avatar_html}
+
         <div style="font-size: 15px; font-weight: 700; color: #ffffff;">
             {student_name}
         </div>
-        <div style="font-size: 12px; color: #60a5fa; margin-top: 2px;">
-            {track}
+        <div style="font-size: 11px; color: #60a5fa; margin-bottom: 8px;">
+            ID: {student_id} • {track}
+        </div>
+        
+        <div style="background: #ffffff; padding: 8px 6px 2px 6px; border-radius: 10px; display: inline-block;">
+            <svg id="barcode_{student_id}"></svg>
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
     <script>
-        JsBarcode("#barcode_{student_id}", "{student_id}", {{
+        JsBarcode("#barcode_{student_id}", "{barcode_val}", {{
             format: "CODE128",
             width: 2,
-            height: 48,
+            height: 44,
             displayValue: true,
-            fontSize: 13,
+            fontSize: 12,
             marginTop: 0,
             marginBottom: 0
         }});
     </script>
     """
-    components.html(html_code, height=250)
+    components.html(html_code, height=270)
 
 
 # --- DATA HELPERS ---
@@ -201,7 +202,7 @@ def load_or_create_df(file_path: str, default_df: pd.DataFrame) -> pd.DataFrame:
 
     for col in default_df.columns:
         if col not in df.columns:
-            df[col] = default_df[col].iloc[0] if len(default_df) > 0 and col in default_df else "NO"
+            df[col] = default_df[col].iloc[0] if len(default_df) > 0 and col in default_df else ""
 
     return df
 
@@ -210,17 +211,17 @@ def save_df(file_path: str, df: pd.DataFrame) -> None:
     df.to_csv(file_path, index=False)
 
 
-# Default Datasets
+# Default Datasets (With barcode_id and photo_url columns connected)
 def get_default_roster() -> pd.DataFrame:
     return pd.DataFrame([
-        {"student_id": "SIM1001", "first_name": "Caroline", "last_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req_hours": 20},
-        {"student_id": "SIM1002", "first_name": "Elizabeth", "last_name": "Cadoff", "course": "6-Marketing", "track": "VP-School Store", "req_hours": 20},
-        {"student_id": "SIM1003", "first_name": "Radha", "last_name": "Bansal", "course": "1-Entrepreneurship", "track": "VP-Marketing", "req_hours": 20},
-        {"student_id": "SIM1004", "first_name": "Liam", "last_name": "Ricciardelli", "course": "2-Marketing", "track": "Officer", "req_hours": 10},
-        {"student_id": "SIM1005", "first_name": "Julian", "last_name": "Mass", "course": "2-Marketing", "track": "Honors: Store", "req_hours": 10},
-        {"student_id": "SIM1006", "first_name": "Henry", "last_name": "Pfeiffer", "course": "6-Marketing", "track": "ICDC", "req_hours": 10},
-        {"student_id": "SIM1007", "first_name": "Caleb", "last_name": "Deems", "course": "7-SEM", "track": "Honors: Store", "req_hours": 10},
-        {"student_id": "SIM1008", "first_name": "Olivia", "last_name": "Campasano", "course": "Accounting 2", "track": "Store", "req_hours": 10},
+        {"student_id": "SIM1001", "barcode_id": "BC-1001", "first_name": "Caroline", "last_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req_hours": 20, "photo_url": ""},
+        {"student_id": "SIM1002", "barcode_id": "BC-1002", "first_name": "Elizabeth", "last_name": "Cadoff", "course": "6-Marketing", "track": "VP-School Store", "req_hours": 20, "photo_url": ""},
+        {"student_id": "SIM1003", "barcode_id": "BC-1003", "first_name": "Radha", "last_name": "Bansal", "course": "1-Entrepreneurship", "track": "VP-Marketing", "req_hours": 20, "photo_url": ""},
+        {"student_id": "SIM1004", "barcode_id": "BC-1004", "first_name": "Liam", "last_name": "Ricciardelli", "course": "2-Marketing", "track": "Officer", "req_hours": 10, "photo_url": ""},
+        {"student_id": "SIM1005", "barcode_id": "BC-1005", "first_name": "Julian", "last_name": "Mass", "course": "2-Marketing", "track": "Honors: Store", "req_hours": 10, "photo_url": ""},
+        {"student_id": "SIM1006", "barcode_id": "BC-1006", "first_name": "Henry", "last_name": "Pfeiffer", "course": "6-Marketing", "track": "ICDC", "req_hours": 10, "photo_url": ""},
+        {"student_id": "SIM1007", "barcode_id": "BC-1007", "first_name": "Caleb", "last_name": "Deems", "course": "7-SEM", "track": "Honors: Store", "req_hours": 10, "photo_url": ""},
+        {"student_id": "SIM1008", "barcode_id": "BC-1008", "first_name": "Olivia", "last_name": "Campasano", "course": "Accounting 2", "track": "Store", "req_hours": 10, "photo_url": ""},
     ])
 
 
@@ -243,8 +244,14 @@ def get_default_sales() -> pd.DataFrame:
 
 
 def reload_all_data():
+    rost_raw = load_or_create_df(ROSTER_FILE, get_default_roster())
+    if "barcode_id" not in rost_raw.columns:
+        rost_raw["barcode_id"] = rost_raw["student_id"]
+    if "photo_url" not in rost_raw.columns:
+        rost_raw["photo_url"] = ""
+
     st.session_state["roster_df"] = normalize_dataframe(
-        load_or_create_df(ROSTER_FILE, get_default_roster()), numeric_columns=["req_hours"]
+        rost_raw, numeric_columns=["req_hours"], text_columns=["student_id", "barcode_id", "first_name", "last_name", "photo_url"]
     )
     
     shifts_raw = load_or_create_df(SHIFTS_FILE, get_default_shifts())
@@ -271,108 +278,9 @@ def reload_all_data():
     )
 
 
-# --- AUTOMATED REVTRAK SYNC ENGINE ---
-def sync_revtrak_orders(silent=False):
-    if "revtrak" not in st.secrets:
-        if not silent:
-            st.error("RevTrak secrets not configured. Please set up `.streamlit/secrets.toml`.")
-        return
-
-    api_url = st.secrets["revtrak"].get("api_url", "")
-    api_key = st.secrets["revtrak"].get("api_key", "")
-
-    if not api_url or not api_key:
-        if not silent:
-            st.error("Missing RevTrak API credentials in secrets configuration.")
-        return
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    try:
-        response = requests.get(f"{api_url}/orders/recent", headers=headers, timeout=3)
-        if response.status_code != 200:
-            if not silent:
-                st.error(f"RevTrak API call failed (HTTP {response.status_code}): {response.text}")
-            return
-
-        orders = response.json().get("orders", [])
-        inv_df = st.session_state.get("inventory_df", load_or_create_df(INVENTORY_FILE, get_default_inventory()))
-        sls_df = st.session_state.get("sales_df", load_or_create_df(SALES_FILE, get_default_sales()))
-        updated = False
-
-        for order in orders:
-            order_id = order.get("order_id")
-            if not sls_df.empty and order_id in sls_df["transaction_id"].values:
-                continue
-
-            for item in order.get("items", []):
-                rt_sku = item.get("sku")
-                qty = int(item.get("quantity", 1))
-
-                match = inv_df[inv_df["revtrak_sku"] == rt_sku]
-                if not match.empty:
-                    idx = match.index[0]
-                    current_stock = int(inv_df.at[idx, "stock"])
-                    inv_df.at[idx, "stock"] = max(0, current_stock - qty)
-
-                    new_sale = {
-                        "transaction_id": order_id,
-                        "timestamp": order.get("created_at", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-                        "item_id": inv_df.at[idx, "item_id"],
-                        "quantity": qty,
-                        "total_price": float(item.get("price", 0.0)) * qty,
-                        "payment_method": "RevTrak Online",
-                    }
-                    sls_df = pd.concat([sls_df, pd.DataFrame([new_sale])], ignore_index=True)
-                    updated = True
-
-        if updated:
-            save_df(INVENTORY_FILE, inv_df)
-            save_df(SALES_FILE, sls_df)
-            st.session_state["inventory_df"] = inv_df
-            st.session_state["sales_df"] = sls_df
-            st.toast("⚡ RevTrak Auto-Sync: New online sales imported & inventory updated!")
-            st.rerun()
-        else:
-            if not silent:
-                st.info("Inventory is already up to date with RevTrak.")
-
-    except Exception as e:
-        if not silent:
-            st.error(f"RevTrak sync error: {e}")
-
-
-def fetch_revtrak_item_details(rt_sku: str) -> dict | None:
-    if "revtrak" not in st.secrets:
-        return None
-
-    api_url = st.secrets["revtrak"].get("api_url", "")
-    api_key = st.secrets["revtrak"].get("api_key", "")
-
-    if not api_url or not api_key:
-        return None
-
-    try:
-        res = requests.get(
-            f"{api_url}/catalog/items/{rt_sku}",
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=3,
-        )
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-    return None
-
-
-# Initialize session state data
+# Load state data
 if "roster_df" not in st.session_state:
     reload_all_data()
-
-sync_revtrak_orders(silent=True)
 
 roster_df = st.session_state["roster_df"]
 shifts_df = st.session_state["shifts_df"]
@@ -380,8 +288,13 @@ inventory_df = st.session_state["inventory_df"]
 sales_df = st.session_state["sales_df"]
 
 
-def student_lookup(student_id: str) -> pd.Series | None:
-    match = roster_df[roster_df["student_id"].astype(str).str.upper() == student_id.strip().upper()]
+def student_lookup_by_code(query_val: str) -> pd.Series | None:
+    """Matches either Student ID or linked Barcode ID."""
+    clean_val = str(query_val).strip().upper()
+    match = roster_df[
+        (roster_df["student_id"].astype(str).str.upper() == clean_val) | 
+        (roster_df["barcode_id"].astype(str).str.upper() == clean_val)
+    ]
     return None if match.empty else match.iloc[0]
 
 
@@ -390,7 +303,7 @@ st.title("Trojan Market")
 st.caption("Simsbury High School DECA • Operations & Hours Dashboard")
 
 with st.expander("⚙️ Store Controls & System Settings"):
-    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.5, 1, 1])
+    ctrl_col1, ctrl_col2 = st.columns([1.5, 1])
     with ctrl_col1:
         low_stock_limit = st.slider("Low stock warning threshold:", min_value=1, max_value=20, value=5)
     with ctrl_col2:
@@ -399,11 +312,6 @@ with st.expander("⚙️ Store Controls & System Settings"):
         if st.button("🔄 Refresh Local Data"):
             reload_all_data()
             st.rerun()
-    with ctrl_col3:
-        st.write("")
-        st.write("")
-        if st.button("🌐 Force Manual RevTrak Sync"):
-            sync_revtrak_orders(silent=False)
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Enrolled Students", len(roster_df))
@@ -414,7 +322,7 @@ m4.metric("Sales Recorded", len(sales_df))
 
 st.write("")
 
-# --- MAIN WORKFLOW TABS ---
+# --- MAIN TABS ---
 tabs = st.tabs([
     "🛡️ ID & Time Clock",
     "💸 POS & Inventory",
@@ -423,48 +331,44 @@ tabs = st.tabs([
 ])
 
 # ----------------------------------------------------
-# TAB 1: ID & TIME CLOCK (HARDWARE & CAMERA SCANNER)
+# TAB 1: ID & TIME CLOCK (CONNECTING PHOTO + ID# + BARCODE)
 # ----------------------------------------------------
 with tabs[0]:
     st.header("Student ID Scanner & Shift Clock")
-    st.caption("Scan student keytag barcode using a hardware USB scanner or webcam camera.")
+    st.caption("Scan keytag card (Hardware USB or Camera) or manually type ID/Barcode.")
 
     col_scan, col_info = st.columns([1.2, 1])
 
     with col_scan:
-        scan_mode = st.radio("Choose Scanner Hardware:", ["USB Barcode Scanner (Keytag)", "Webcam / Camera Feed"], horizontal=True)
+        scan_mode = st.radio("Choose Scanner Mode:", ["USB Keytag Scanner / Manual", "Camera Photo Scan"], horizontal=True)
 
-        scanned_id = ""
+        scanned_input = ""
 
-        if scan_mode == "USB Barcode Scanner (Keytag)":
+        if scan_mode == "USB Keytag Scanner / Manual":
             with st.form(key="scanner_form", clear_on_submit=True):
-                scanned_barcode = st.text_input("Barcode Input Feed (Scan Keytag Here):", key="barcode_field")
+                scanned_barcode = st.text_input("Scan Card / Type ID or Barcode Here:", key="barcode_field")
                 shift_type = st.selectbox(
                     "Select Shift Type:",
                     ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"],
                 )
-                submit_scan = st.form_submit_button("⚡ Process Keytag Scan")
+                submit_scan = st.form_submit_button("⚡ Process Check-In")
             if submit_scan:
-                scanned_id = scanned_barcode
+                scanned_input = scanned_barcode
         else:
             shift_type = st.selectbox(
                 "Select Shift Type:",
                 ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"],
                 key="cam_shift_type"
             )
-            camera_image = st.camera_input("📷 Hold Keytag Barcode up to Camera")
+            camera_image = st.camera_input("📷 Take Photo of Keytag or Student ID Card")
             if camera_image:
-                st.info("Processing camera scan...")
-                # Note: If pyzbar/opencv is installed in environment, barcode is parsed directly.
-                # Fallback to manual entry if camera snapshot is captured:
-                manual_cam_id = st.text_input("Confirm Barcode Digits from Camera:", key="cam_manual_id")
-                if st.button("Submit Camera Scan"):
-                    scanned_id = manual_cam_id
+                st.info("Photo captured!")
+                scanned_input = st.text_input("Enter/Confirm ID or Barcode Digits in Photo:", key="cam_code_input")
 
-        if scanned_id:
-            student = student_lookup(scanned_id)
+        if scanned_input:
+            student = student_lookup_by_code(scanned_input)
             if student is None:
-                st.error(f"Student barcode '{scanned_id}' not registered in database.")
+                st.error(f"No student found matching ID/Barcode '{scanned_input}'.")
             else:
                 student_name = f"{student['first_name']} {student['last_name']}"
                 active_shifts = shifts_df[(shifts_df["student_id"].astype(str) == str(student["student_id"])) & (shifts_df["status"] == "ACTIVE")]
@@ -527,28 +431,31 @@ with tabs[0]:
             )
 
     st.markdown("---")
-    st.subheader("📱 Digital Barcode Keytag / Mobile Member Pass")
+    st.subheader("📱 Digital Barcode Keytag Pass & Profile View")
     if roster_df.empty:
         st.info("No students enrolled in roster.")
     else:
-        student_opts = {f"{row['first_name']} {row['last_name']} ({row['student_id']})": row['student_id'] for _, row in roster_df.iterrows()}
-        selected_pass_label = st.selectbox("Select Student to View Digital Keytag Pass:", list(student_opts.keys()))
+        student_opts = {f"{row['first_name']} {row['last_name']} (ID: {row['student_id']})": row['student_id'] for _, row in roster_df.iterrows()}
+        selected_pass_label = st.selectbox("Select Student Profile:", list(student_opts.keys()))
         pass_sid = student_opts[selected_pass_label]
-        pass_student = student_lookup(pass_sid)
+        pass_student = student_lookup_by_code(pass_sid)
 
         k_col1, k_col2 = st.columns([1, 1.5])
         with k_col1:
             render_barcode_keycard(
                 student_id=str(pass_student["student_id"]),
+                barcode_val=str(pass_student["barcode_id"]),
                 student_name=f"{pass_student['first_name']} {pass_student['last_name']}",
-                track=f"{pass_student['track']} • {pass_student['course']}"
+                track=f"{pass_student['track']} • {pass_student['course']}",
+                photo_url=str(pass_student.get("photo_url", ""))
             )
         with k_col2:
-            st.markdown(f"### Member Info: **{pass_student['first_name']} {pass_student['last_name']}**")
-            st.write(f"• **Student ID / Barcode:** `{pass_student['student_id']}`")
-            st.write(f"• **Course:** {pass_student['course']}")
-            st.write(f"• **DECA Role:** {pass_student['track']}")
-            st.write(f"• **Target Hours:** {pass_student['req_hours']} hrs")
+            st.markdown(f"### Profile: **{pass_student['first_name']} {pass_student['last_name']}**")
+            st.write(f"• **Student ID#:** `{pass_student['student_id']}`")
+            st.write(f"• **Assigned Barcode ID:** `{pass_student['barcode_id']}`")
+            st.write(f"• **Enrolled Course:** {pass_student['course']}")
+            st.write(f"• **DECA Role / Track:** {pass_student['track']}")
+            st.write(f"• **Required Hours:** {pass_student['req_hours']} hrs")
 
 # ----------------------------------------------------
 # TAB 2: POS & INVENTORY
@@ -636,90 +543,12 @@ with tabs[1]:
 
         st.dataframe(styled_inventory, use_container_width=True, hide_index=True)
 
-    st.markdown("---")
-    st.subheader("Inventory Editing Tools")
-    
-    t_add, t_restock = st.tabs(["📦 Add New Product", "🔄 Restock Existing Item"])
-    
-    with t_add:
-        if "auto_name" not in st.session_state:
-            st.session_state["auto_name"] = ""
-        if "auto_price" not in st.session_state:
-            st.session_state["auto_price"] = 2.00
-        if "auto_cat" not in st.session_state:
-            st.session_state["auto_cat"] = "Food"
-
-        c1, c2, c_pull = st.columns([1, 1.5, 1])
-        new_sku = c1.text_input("SKU ID:", value=f"SKU-00{len(inventory_df)+1}")
-        new_rsku = c2.text_input("RevTrak SKU:", value=f"RT-ITEM-0{len(inventory_df)+1}")
-        
-        with c_pull:
-            st.write("")
-            st.write("")
-            if st.button("⚡ Auto-Pull Details from RevTrak"):
-                fetched = fetch_revtrak_item_details(new_rsku)
-                if fetched:
-                    st.session_state["auto_name"] = fetched.get("title", fetched.get("name", ""))
-                    st.session_state["auto_price"] = float(fetched.get("price", 2.00))
-                    st.session_state["auto_cat"] = fetched.get("category", "Food")
-                    st.success(f"Pulled '{st.session_state['auto_name']}' from RevTrak!")
-                    st.rerun()
-                else:
-                    st.info("No matching RevTrak catalog item found for that SKU. Enter details manually.")
-
-        c3, c4, c5, c6 = st.columns([1.8, 1.2, 1, 1])
-        new_name = c3.text_input("Item Name:", value=st.session_state["auto_name"])
-        
-        cat_options = ["Food", "Beverage", "Apparel", "Merchandise", "Supplies"]
-        cat_idx = cat_options.index(st.session_state["auto_cat"]) if st.session_state["auto_cat"] in cat_options else 0
-        new_cat = c4.selectbox("Category:", cat_options, index=cat_idx)
-        
-        new_stock = c5.number_input("Initial Stock:", min_value=0, value=20)
-        new_price = c6.number_input("Price ($):", min_value=0.0, value=st.session_state["auto_price"], step=0.25)
-
-        if st.button("➕ Add Item to Store Catalog"):
-            if new_name.strip() == "":
-                st.error("Please enter an item name.")
-            else:
-                new_item = {
-                    "item_id": new_sku,
-                    "revtrak_sku": new_rsku,
-                    "item_name": new_name,
-                    "category": new_cat,
-                    "stock": new_stock,
-                    "unit_price": new_price,
-                }
-                inventory_df = pd.concat([inventory_df, pd.DataFrame([new_item])], ignore_index=True)
-                inventory_df = normalize_dataframe(inventory_df, numeric_columns=["stock", "unit_price"])
-                save_df(INVENTORY_FILE, inventory_df)
-                st.session_state["inventory_df"] = inventory_df
-                
-                st.session_state["auto_name"] = ""
-                st.session_state["auto_price"] = 2.00
-                st.session_state["auto_cat"] = "Food"
-                
-                st.success(f"Added item '{new_name}' ({new_sku})!")
-                st.rerun()
-
-    with t_restock:
-        if not inventory_df.empty:
-            item_to_restock = st.selectbox("Select Item to Restock:", inventory_df["item_name"].tolist())
-            restock_amt = st.number_input("Quantity Added to Stock:", min_value=1, value=10)
-            
-            if st.button("📈 Confirm Stock Addition"):
-                r_idx = inventory_df.index[inventory_df["item_name"] == item_to_restock][0]
-                inventory_df.at[r_idx, "stock"] = int(inventory_df.at[r_idx, "stock"]) + restock_amt
-                save_df(INVENTORY_FILE, inventory_df)
-                st.session_state["inventory_df"] = inventory_df
-                st.success(f"Added +{restock_amt} units to {item_to_restock}!")
-                st.rerun()
-
 # ----------------------------------------------------
-# TAB 3: ADVISOR DASHBOARD (BARCODE ASSIGNMENT TOOL ADDED)
+# TAB 3: ADVISOR DASHBOARD (LINK PHOTO + ID# + BARCODE)
 # ----------------------------------------------------
 with tabs[2]:
     st.header("DECA Advisor & Student Progress Dashboard")
-    st.caption("Tracks required shift hours, links keytag barcodes, and monitors student progress.")
+    st.caption("Tracks required shift hours, links keytag barcodes and photos to student profiles.")
 
     completed_shifts = shifts_df[shifts_df["status"] == "COMPLETED"].copy() if "status" in shifts_df.columns else pd.DataFrame()
     if not completed_shifts.empty:
@@ -740,52 +569,62 @@ with tabs[2]:
     st.subheader("Student Hours Progress Roster")
     for idx, row in summary_df.iterrows():
         c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1, 2])
-        c_name.markdown(f"**{row['first_name']} {row['last_name']}** (`{row['student_id']}`)")
+        c_name.markdown(f"**{row['first_name']} {row['last_name']}** (`ID: {row['student_id']}` | `BC: {row['barcode_id']}`)")
         c_course.caption(f"{row['course']} • {row['track']}")
         c_hours.markdown(f"**{row['hours_logged']:.1f}** / {row['req_hours']} hrs")
         pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0)
         c_bar.progress(pct, text=f"{row['progress_%']}%")
 
-    if "flagged" in shifts_df.columns:
-        flagged_shifts = shifts_df[shifts_df["flagged"].astype(str).str.startswith("YES", na=False)]
-        if not flagged_shifts.empty:
-            st.markdown("---")
-            st.subheader("⚠️ Shifts Flagged for Review")
-            st.dataframe(flagged_shifts[["student_id", "name", "check_in", "check_out", "hours_logged", "flagged"]], use_container_width=True, hide_index=True)
-
-    # KEYTAG BARCODE ASSIGNMENT TOOL
+    # LINK PHOTO, ID#, AND BARCODE TOOL
     st.markdown("---")
-    with st.expander("🏷️ Keytag Barcode Registrar: Assign Barcode to Student"):
+    with st.expander("🔗 Profile Registrar: Connect Barcode & Photo to Student"):
         if roster_df.empty:
-            st.warning("No students in roster to assign barcodes.")
+            st.warning("No students in roster to edit.")
         else:
-            r_opts = {f"{row['first_name']} {row['last_name']} (Current ID: {row['student_id']})": row['student_id'] for _, row in roster_df.iterrows()}
-            selected_student_key = st.selectbox("Select Student to Assign New Keytag Barcode:", list(r_opts.keys()))
-            target_assign_id = r_opts[selected_student_key]
+            r_opts = {f"{row['first_name']} {row['last_name']} (ID: {row['student_id']})": row['student_id'] for _, row in roster_df.iterrows()}
+            selected_student_key = st.selectbox("Select Student Profile to Edit:", list(r_opts.keys()))
+            target_sid = r_opts[selected_student_key]
+            current_st = student_lookup_by_code(target_sid)
 
-            with st.form("barcode_assign_form", clear_on_submit=True):
-                new_assigned_barcode = st.text_input("Scan or Type New Keytag Barcode:")
-                btn_assign = st.form_submit_button("🔗 Link Barcode to Student")
+            col_link1, col_link2, col_link3 = st.columns(3)
+            edit_id = col_link1.text_input("Student ID#:", value=str(current_st["student_id"]))
+            edit_barcode = col_link2.text_input("Linked Keytag Barcode ID:", value=str(current_st["barcode_id"]))
+            edit_photo = col_link3.text_input("Photo Image URL (or upload below):", value=str(current_st.get("photo_url", "")))
 
-            if btn_assign and new_assigned_barcode:
-                r_idx = roster_df.index[roster_df["student_id"].astype(str) == str(target_assign_id)][0]
-                roster_df.at[r_idx, "student_id"] = new_assigned_barcode.strip()
+            photo_file = st.file_uploader("Upload Profile Photo Image:", type=["jpg", "png", "jpeg"])
+            if photo_file is not None:
+                # Save uploaded photo to local assets folder
+                assets_dir = os.path.join(ROOT_DIR, "photos")
+                os.makedirs(assets_dir, exist_ok=True)
+                file_path = os.path.join(assets_dir, f"{edit_id}.png")
+                with open(file_path, "wb") as f:
+                    f.write(photo_file.getbuffer())
+                edit_photo = f"photos/{edit_id}.png"
+                st.success("Uploaded photo saved!")
+
+            if st.button("💾 Save Profile Connections"):
+                r_idx = roster_df.index[roster_df["student_id"].astype(str) == str(target_sid)][0]
+                roster_df.at[r_idx, "student_id"] = edit_id.strip()
+                roster_df.at[r_idx, "barcode_id"] = edit_barcode.strip()
+                roster_df.at[r_idx, "photo_url"] = edit_photo.strip()
+                
                 save_df(ROSTER_FILE, roster_df)
                 st.session_state["roster_df"] = roster_df
-                st.success(f"Successfully assigned barcode '{new_assigned_barcode.strip()}' to student!")
+                st.success(f"Updated profile connections for {current_st['first_name']} {current_st['last_name']}!")
                 st.rerun()
 
     st.markdown("---")
-    with st.expander("👤 DECA Student Roster Management"):
-        col_s1, col_s2, col_s3 = st.columns(3)
-        st_id = col_s1.text_input("Student ID Number / Keytag Barcode:", value=f"SIM100{len(roster_df)+1}")
-        st_fn = col_s2.text_input("First Name:")
-        st_ln = col_s3.text_input("Last Name:")
+    with st.expander("👤 DECA Student Roster Management (Add New Student)"):
+        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+        st_id = col_s1.text_input("Student ID#:", value=f"SIM100{len(roster_df)+1}")
+        st_bc = col_s2.text_input("Keytag Barcode ID:", value=f"BC-100{len(roster_df)+1}")
+        st_fn = col_s3.text_input("First Name:")
+        st_ln = col_s4.text_input("Last Name:")
 
-        col_s4, col_s5, col_s6 = st.columns(3)
-        st_course = col_s4.selectbox("Enrolled Course:", ["1-Entrepreneurship", "2-Marketing", "6-Marketing", "7-SEM", "Accounting 2", "Store Management"])
-        st_track = col_s5.text_input("DECA Role / Track:", value="Store Officer")
-        st_req = col_s6.number_input("Required Hours:", min_value=1, max_value=100, value=10)
+        col_s5, col_s6, col_s7 = st.columns(3)
+        st_course = col_s5.selectbox("Enrolled Course:", ["1-Entrepreneurship", "2-Marketing", "6-Marketing", "7-SEM", "Accounting 2", "Store Management"])
+        st_track = col_s6.text_input("DECA Role / Track:", value="Store Officer")
+        st_req = col_s7.number_input("Required Hours:", min_value=1, max_value=100, value=10)
 
         if st.button("➕ Register Student to Roster"):
             if st_fn.strip() == "" or st_ln.strip() == "":
@@ -793,11 +632,13 @@ with tabs[2]:
             else:
                 new_student = {
                     "student_id": st_id,
+                    "barcode_id": st_bc,
                     "first_name": st_fn,
                     "last_name": st_ln,
                     "course": st_course,
                     "track": st_track,
                     "req_hours": st_req,
+                    "photo_url": "",
                 }
                 roster_df = pd.concat([roster_df, pd.DataFrame([new_student])], ignore_index=True)
                 roster_df = normalize_dataframe(roster_df, numeric_columns=["req_hours"])
