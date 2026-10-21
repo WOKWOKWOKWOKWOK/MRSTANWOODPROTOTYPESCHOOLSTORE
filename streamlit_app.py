@@ -23,12 +23,16 @@ AUDIT_FILE = os.path.join(ROOT_DIR, "audit_logs.csv")
 
 MAX_SHIFT_HOURS = 4.0
 
+# Authorized Admin Accounts
 ADMIN_EMAILS = [
     "deca@simsburyschools.net",
     "jstanwood@simsburyschools.net",
     "27cadoffe@simsburyschools.net",
     "30guptaa@simsburyschools.net",
 ]
+
+# Admin Password (Fallback or fetched from .streamlit/secrets.toml)
+DEFAULT_ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "DECA2026!")
 
 # --- STYLING (FORCE-HIDE SIDEBAR ON DESKTOP & MOBILE) ---
 st.markdown(
@@ -449,7 +453,7 @@ def student_lookup_by_code(query_val: str) -> pd.Series | None:
 
 
 # ----------------------------------------------------
-# AUTHENTICATION & LOGIN SCREEN
+# AUTHENTICATION & LOGIN SCREEN (STRICT PASSWORD & DOMAIN CHECK)
 # ----------------------------------------------------
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
@@ -472,25 +476,41 @@ if not st.session_state["logged_in"]:
         )
         st.write("")
         with st.form(key="login_form"):
-            email_input = st.text_input("Enter School Email Address:", placeholder="user@simsburyschools.net or signin.org").strip().lower()
-            pass_input = st.text_input("Password (Optional for Kiosk):", type="password")
+            email_input = st.text_input("Enter Email Address:", placeholder="user@simsburyschools.net or signin.org").strip().lower()
+            pass_input = st.text_input("Password (Required for Admins):", type="password")
             login_btn = st.form_submit_button("🔑 Sign In to Terminal")
             
         if login_btn:
-            if not email_input:
+            clean_email = email_input.strip().lower()
+            
+            if not clean_email:
                 st.error("Please enter an email address to sign in.")
-            else:
-                st.session_state["logged_in"] = True
-                st.session_state["user_email"] = email_input
-                
-                if email_input in ADMIN_EMAILS:
-                    st.session_state["is_admin"] = True
-                    log_audit_event("ADMIN_LOGIN", f"Admin signed in: {email_input}")
+            elif clean_email in ADMIN_EMAILS:
+                # ADMIN LOGIN WITH PASSWORD VERIFICATION
+                if not pass_input:
+                    st.error("❌ Password is required for Admin sign-in.")
+                    log_audit_event("FAILED_LOGIN", f"Missing password attempt for admin: {clean_email}")
+                elif pass_input != DEFAULT_ADMIN_PASSWORD:
+                    st.error("❌ Incorrect password for Admin account.")
+                    log_audit_event("FAILED_LOGIN", f"Invalid password attempt for admin: {clean_email}")
                 else:
-                    st.session_state["is_admin"] = False
-                    log_audit_event("KIOSK_LOGIN", f"Terminal kiosk signed in: {email_input}")
-                    
+                    st.session_state["logged_in"] = True
+                    st.session_state["user_email"] = clean_email
+                    st.session_state["is_admin"] = True
+                    log_audit_event("ADMIN_LOGIN", f"Admin signed in: {clean_email}")
+                    st.rerun()
+            elif clean_email == "signin.org" or clean_email.endswith("@simsburyschools.net"):
+                # KIOSK MODE LOGIN
+                st.session_state["logged_in"] = True
+                st.session_state["user_email"] = clean_email
+                st.session_state["is_admin"] = False
+                log_audit_event("KIOSK_LOGIN", f"Terminal kiosk signed in: {clean_email}")
                 st.rerun()
+            else:
+                # UNRECOGNIZED / TYPO EMAILS REJECTED
+                st.error("❌ Unrecognized email address. Enter a valid admin email or 'signin.org' for kiosk mode.")
+                log_audit_event("REJECTED_LOGIN", f"Attempted sign-in with invalid domain/email: {clean_email}")
+
     st.stop()
 
 
