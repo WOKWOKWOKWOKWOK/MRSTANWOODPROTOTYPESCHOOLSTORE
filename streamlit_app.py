@@ -3,6 +3,7 @@ import datetime
 import requests
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -117,6 +118,59 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+# --- BARCODE KEYCARD COMPONENT RENDERING ---
+def render_barcode_keycard(student_id: str, student_name: str, track: str):
+    """Renders a digital gym-style keytag pass with scannable Code128 barcode."""
+    html_code = f"""
+    <div style="
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        border: 2px solid #3b82f6;
+        border-radius: 16px;
+        padding: 16px;
+        width: 310px;
+        text-align: center;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        color: #ffffff;
+        margin: auto;
+    ">
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #93c5fd; font-weight: 700;">
+            SIMSBURY HIGH SCHOOL
+        </div>
+        <div style="font-size: 17px; font-weight: 800; color: #f8fafc; margin-bottom: 2px;">
+            🛡️ TROJAN MARKET PASS
+        </div>
+        <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 10px;">
+            MEMBER SIGN-IN KEYTAG
+        </div>
+        
+        <div style="background: #ffffff; padding: 10px 6px 2px 6px; border-radius: 10px; display: inline-block; margin-bottom: 10px;">
+            <svg id="barcode_{student_id}"></svg>
+        </div>
+        
+        <div style="font-size: 15px; font-weight: 700; color: #ffffff;">
+            {student_name}
+        </div>
+        <div style="font-size: 12px; color: #60a5fa; margin-top: 2px;">
+            {track}
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <script>
+        JsBarcode("#barcode_{student_id}", "{student_id}", {{
+            format: "CODE128",
+            width: 2,
+            height: 48,
+            displayValue: true,
+            fontSize: 13,
+            marginTop: 0,
+            marginBottom: 0
+        }});
+    </script>
+    """
+    components.html(html_code, height=250)
 
 
 # --- DATA HELPERS ---
@@ -294,6 +348,30 @@ def sync_revtrak_orders(silent=False):
             st.error(f"RevTrak sync error: {e}")
 
 
+def fetch_revtrak_item_details(rt_sku: str) -> dict | None:
+    """Auto-pull item details directly from RevTrak product catalog by SKU."""
+    if "revtrak" not in st.secrets:
+        return None
+
+    api_url = st.secrets["revtrak"].get("api_url", "")
+    api_key = st.secrets["revtrak"].get("api_key", "")
+
+    if not api_url or not api_key:
+        return None
+
+    try:
+        res = requests.get(
+            f"{api_url}/catalog/items/{rt_sku}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=3,
+        )
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
+    return None
+
+
 # Initialize session state data
 if "roster_df" not in st.session_state:
     reload_all_data()
@@ -312,7 +390,7 @@ def student_lookup(student_id: str) -> pd.Series | None:
     return None if match.empty else match.iloc[0]
 
 
-# --- HEADER & TOP CONTROLS (MOVED OUT OF SIDEBAR) ---
+# --- HEADER & TOP CONTROLS ---
 st.title("Trojan Market")
 st.caption("Simsbury High School DECA • Operations & Hours Dashboard")
 
@@ -352,22 +430,22 @@ tabs = st.tabs([
 ])
 
 # ----------------------------------------------------
-# TAB 1: ID & TIME CLOCK
+# TAB 1: ID & TIME CLOCK (GYM-STYLE KEYTAG PASS ADDED)
 # ----------------------------------------------------
 with tabs[0]:
     st.header("Student ID Scanner & Shift Clock")
-    st.caption("Scan student ID card barcode or manually type student ID.")
+    st.caption("Scan student barcode keytag card or type ID manually.")
 
-    col_scan, col_info = st.columns([1, 1])
+    col_scan, col_info = st.columns([1.2, 1])
 
     with col_scan:
         with st.form(key="scanner_form", clear_on_submit=True):
-            scanned_barcode = st.text_input("Barcode Input Feed (Scan Card Here):", key="barcode_field")
+            scanned_barcode = st.text_input("Barcode Scanner Feed (Scan Keytag / Card Here):", key="barcode_field")
             shift_type = st.selectbox(
                 "Select Shift Type:",
                 ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"],
             )
-            submit_scan = st.form_submit_button("Process Card Scan")
+            submit_scan = st.form_submit_button("⚡ Process Keytag Check-In")
 
         if submit_scan and scanned_barcode:
             student = student_lookup(scanned_barcode)
@@ -435,6 +513,33 @@ with tabs[0]:
             )
 
     st.markdown("---")
+    
+    # BIG SKY STYLE DIGITAL KEYTAG CARD DISPLAY
+    st.subheader("📱 Digital Barcode Keytag / Mobile Member Pass")
+    if roster_df.empty:
+        st.info("No students enrolled in roster.")
+    else:
+        student_opts = {f"{row['first_name']} {row['last_name']} ({row['student_id']})": row['student_id'] for _, row in roster_df.iterrows()}
+        selected_pass_label = st.selectbox("Select Student to View Digital Keytag Pass:", list(student_opts.keys()))
+        pass_sid = student_opts[selected_pass_label]
+        pass_student = student_lookup(pass_sid)
+
+        k_col1, k_col2 = st.columns([1, 1.5])
+        with k_col1:
+            render_barcode_keycard(
+                student_id=pass_student["student_id"],
+                student_name=f"{pass_student['first_name']} {pass_student['last_name']}",
+                track=f"{pass_student['track']} • {pass_student['course']}"
+            )
+        with k_col2:
+            st.markdown(f"### Member Info: **{pass_student['first_name']} {pass_student['last_name']}**")
+            st.write(f"• **Student ID:** `{pass_student['student_id']}`")
+            st.write(f"• **Course:** {pass_student['course']}")
+            st.write(f"• **DECA Role:** {pass_student['track']}")
+            st.write(f"• **Required Target Hours:** {pass_student['req_hours']} hrs")
+            st.caption("Tip: Students can screenshot this keytag pass on their phone to scan at the terminal register!")
+
+    st.markdown("---")
     with st.expander("🛠️ Advisor Tool: Add / Override Manual Shift Entry"):
         if roster_df.empty:
             st.warning("Please add students to roster first.")
@@ -470,7 +575,7 @@ with tabs[0]:
                 st.rerun()
 
 # ----------------------------------------------------
-# TAB 2: POS & INVENTORY
+# TAB 2: POS & INVENTORY (WITH AUTO-PULL FEATURES)
 # ----------------------------------------------------
 with tabs[1]:
     st.header("Point of Sale & Live Inventory")
@@ -561,13 +666,41 @@ with tabs[1]:
     t_add, t_restock = st.tabs(["📦 Add New Product", "🔄 Restock Existing Item"])
     
     with t_add:
-        c1, c2, c3, c4, c5, c6 = st.columns([1, 1, 1.8, 1.2, 1, 1])
+        # Pre-fill states for auto-pull
+        if "auto_name" not in st.session_state:
+            st.session_state["auto_name"] = ""
+        if "auto_price" not in st.session_state:
+            st.session_state["auto_price"] = 2.00
+        if "auto_cat" not in st.session_state:
+            st.session_state["auto_cat"] = "Food"
+
+        c1, c2, c_pull = st.columns([1, 1.5, 1])
         new_sku = c1.text_input("SKU ID:", value=f"SKU-00{len(inventory_df)+1}")
         new_rsku = c2.text_input("RevTrak SKU:", value=f"RT-ITEM-0{len(inventory_df)+1}")
-        new_name = c3.text_input("Item Name:")
-        new_cat = c4.selectbox("Category:", ["Food", "Beverage", "Apparel", "Merchandise", "Supplies"])
+        
+        with c_pull:
+            st.write("")
+            st.write("")
+            if st.button("⚡ Auto-Pull Details from RevTrak"):
+                fetched = fetch_revtrak_item_details(new_rsku)
+                if fetched:
+                    st.session_state["auto_name"] = fetched.get("title", fetched.get("name", ""))
+                    st.session_state["auto_price"] = float(fetched.get("price", 2.00))
+                    st.session_state["auto_cat"] = fetched.get("category", "Food")
+                    st.success(f"Pulled '{st.session_state['auto_name']}' from RevTrak!")
+                    st.rerun()
+                else:
+                    st.info("No matching RevTrak catalog item found for that SKU. Enter details manually.")
+
+        c3, c4, c5, c6 = st.columns([1.8, 1.2, 1, 1])
+        new_name = c3.text_input("Item Name:", value=st.session_state["auto_name"])
+        
+        cat_options = ["Food", "Beverage", "Apparel", "Merchandise", "Supplies"]
+        cat_idx = cat_options.index(st.session_state["auto_cat"]) if st.session_state["auto_cat"] in cat_options else 0
+        new_cat = c4.selectbox("Category:", cat_options, index=cat_idx)
+        
         new_stock = c5.number_input("Initial Stock:", min_value=0, value=20)
-        new_price = c6.number_input("Price ($):", min_value=0.0, value=2.00, step=0.25)
+        new_price = c6.number_input("Price ($):", min_value=0.0, value=st.session_state["auto_price"], step=0.25)
 
         if st.button("➕ Add Item to Store Catalog"):
             if new_name.strip() == "":
@@ -585,6 +718,12 @@ with tabs[1]:
                 inventory_df = normalize_dataframe(inventory_df, numeric_columns=["stock", "unit_price"])
                 save_df(INVENTORY_FILE, inventory_df)
                 st.session_state["inventory_df"] = inventory_df
+                
+                # Reset auto-pull helpers
+                st.session_state["auto_name"] = ""
+                st.session_state["auto_price"] = 2.00
+                st.session_state["auto_cat"] = "Food"
+                
                 st.success(f"Added item '{new_name}' ({new_sku})!")
                 st.rerun()
 
