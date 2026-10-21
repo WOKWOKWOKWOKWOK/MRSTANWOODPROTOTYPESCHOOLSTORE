@@ -222,6 +222,7 @@ def get_default_roster() -> pd.DataFrame:
         {"student_id": "SIM1006", "barcode_id": "BC-1006", "first_name": "Henry", "last_name": "Pfeiffer", "course": "6-Marketing", "track": "ICDC", "req_hours": 10, "photo_url": ""},
         {"student_id": "SIM1007", "barcode_id": "BC-1007", "first_name": "Caleb", "last_name": "Deems", "course": "7-SEM", "track": "Honors: Store", "req_hours": 10, "photo_url": ""},
         {"student_id": "SIM1008", "barcode_id": "BC-1008", "first_name": "Olivia", "last_name": "Campasano", "course": "Accounting 2", "track": "Store", "req_hours": 10, "photo_url": ""},
+        {"student_id": "SIM1009", "barcode_id": "13753", "first_name": "Anay", "last_name": "Gupta", "course": "Accounting 2", "track": "Store", "req_hours": 10, "photo_url": ""},
     ])
 
 
@@ -435,7 +436,7 @@ tabs = st.tabs([
 ])
 
 # ----------------------------------------------------
-# TAB 1: ID & TIME CLOCK
+# TAB 1: ID & TIME CLOCK (WITH LIVE AUTO-SYNC PASS)
 # ----------------------------------------------------
 with tabs[0]:
     st.header("Student Keytag Scanner & Shift Clock")
@@ -458,6 +459,10 @@ with tabs[0]:
                 st.error(f"❌ Barcode/ID '{scanned_barcode}' is not registered in the database.")
             else:
                 student_name = f"{student['first_name']} {student['last_name']}"
+                
+                # AUTO-SYNC: Store the last scanned student so the pass card flips to them automatically!
+                st.session_state["active_pass_sid"] = str(student["student_id"])
+                
                 active_shifts = shifts_df[(shifts_df["student_id"].astype(str) == str(student["student_id"])) & (shifts_df["status"] == "ACTIVE")]
 
                 if active_shifts.empty:
@@ -522,8 +527,15 @@ with tabs[0]:
     if roster_df.empty:
         st.info("No students enrolled in roster.")
     else:
-        student_opts = {f"{row['first_name']} {row['last_name']} (ID: {row['student_id']})": row['student_id'] for _, row in roster_df.iterrows()}
-        selected_pass_label = st.selectbox("Select Student Profile:", list(student_opts.keys()))
+        student_opts = {f"{row['first_name']} {row['last_name']} (ID: {row['student_id']})": str(row['student_id']) for _, row in roster_df.iterrows()}
+        student_labels = list(student_opts.keys())
+        student_ids = list(student_opts.values())
+
+        # Auto-Select the student who just scanned, or fallback to the first student
+        active_sid = st.session_state.get("active_pass_sid", student_ids[0])
+        default_index = student_ids.index(active_sid) if active_sid in student_ids else 0
+
+        selected_pass_label = st.selectbox("Select Student Profile:", student_labels, index=default_index)
         pass_sid = student_opts[selected_pass_label]
         pass_student = student_lookup_by_code(pass_sid)
 
