@@ -123,7 +123,6 @@ def load_or_create_df(file_path: str, default_df: pd.DataFrame) -> pd.DataFrame:
         default_df.to_csv(file_path, index=False)
         return default_df.copy()
 
-    # Ensure any new columns from default_df exist in loaded df
     for col in default_df.columns:
         if col not in df.columns:
             df[col] = default_df[col].iloc[0] if len(default_df) > 0 and col in default_df else "NO"
@@ -135,7 +134,7 @@ def save_df(file_path: str, df: pd.DataFrame) -> None:
     df.to_csv(file_path, index=False)
 
 
-# Default datasets[cite: 1]
+# Default datasets
 def get_default_roster() -> pd.DataFrame:
     return pd.DataFrame([
         {"student_id": "SIM1001", "first_name": "Caroline", "last_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req_hours": 20},
@@ -213,7 +212,7 @@ st.caption("Simsbury High School DECA • Operations & Hours Dashboard")
 
 with st.sidebar:
     st.markdown("### Store Controls")
-    st.info("Central management system for student time tracking, POS, and DECA course progress[cite: 1].")
+    st.info("Central management system for student time tracking, POS, and DECA course progress.")
 
     if st.button("🔄 Refresh Data"):
         reload_all_data()
@@ -324,12 +323,48 @@ with tabs[0]:
                 hide_index=True,
             )
 
+    # DIRECT EDIT TOOL: Manual Shift Override
+    st.markdown("---")
+    with st.expander("🛠️ Advisor Tool: Add / Override Manual Shift Entry"):
+        if roster_df.empty:
+            st.warning("Please add students to roster first.")
+        else:
+            student_list = [f"{row['student_id']} - {row['first_name']} {row['last_name']}" for _, row in roster_df.iterrows()]
+            selected_student_str = st.selectbox("Select Student for Manual Shift Entry:", student_list)
+            target_sid = selected_student_str.split(" - ")[0]
+            target_student = student_lookup(target_sid)
+            
+            col_m1, col_m2, col_m3 = st.columns(3)
+            manual_hours = col_m1.number_input("Hours to Log:", min_value=0.25, max_value=12.0, value=1.0, step=0.25)
+            manual_shift_type = col_m2.selectbox("Shift Category:", ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"], key="manual_shift_cat")
+            manual_date = col_m3.date_input("Shift Date:", value=datetime.date.today())
+
+            if st.button("➕ Log Manual Shift Hours"):
+                st_name = f"{target_student['first_name']} {target_student['last_name']}"
+                dt_stamp = manual_date.strftime("%Y-%m-%d 12:00:00")
+                manual_record = {
+                    "student_id": target_sid,
+                    "name": st_name,
+                    "check_in": dt_stamp,
+                    "check_out": dt_stamp,
+                    "hours_logged": manual_hours,
+                    "shift_type": manual_shift_type,
+                    "status": "COMPLETED",
+                    "flagged": "NO (Manual Override)",
+                }
+                shifts_df = pd.concat([shifts_df, pd.DataFrame([manual_record])], ignore_index=True)
+                shifts_df = normalize_dataframe(shifts_df, numeric_columns=["hours_logged"])
+                save_df(SHIFTS_FILE, shifts_df)
+                st.session_state["shifts_df"] = shifts_df
+                st.success(f"Added {manual_hours} hrs manually for {st_name}!")
+                st.rerun()
+
 # ----------------------------------------------------
 # TAB 2: POS & INVENTORY
 # ----------------------------------------------------
 with tabs[1]:
     st.header("Point of Sale & Live Inventory")
-    st.caption("Record purchases and automatically adjust store inventory levels[cite: 1].")
+    st.caption("Record purchases and automatically adjust store inventory levels.")
 
     pos_col, inv_col = st.columns([1, 1.2])
 
@@ -410,12 +445,57 @@ with tabs[1]:
 
         st.dataframe(styled_inventory, use_container_width=True, hide_index=True)
 
+    # DIRECT EDIT TOOL: Inventory Management & Restock
+    st.markdown("---")
+    st.subheader("Inventory Editing Tools")
+    
+    t_add, t_restock = st.tabs(["📦 Add New Product", "🔄 Restock Existing Item"])
+    
+    with t_add:
+        c1, c2, c3, c4, c5 = st.columns([1.2, 2, 1.5, 1, 1])
+        new_sku = c1.text_input("SKU ID:", value=f"SKU-00{len(inventory_df)+1}")
+        new_name = c2.text_input("Item Name:")
+        new_cat = c3.selectbox("Category:", ["Food", "Beverage", "Apparel", "Merchandise", "Supplies"])
+        new_stock = c4.number_input("Initial Stock:", min_value=0, value=20)
+        new_price = c5.number_input("Price ($):", min_value=0.0, value=2.00, step=0.25)
+
+        if st.button("➕ Add Item to Store Catalog"):
+            if new_name.strip() == "":
+                st.error("Please enter an item name.")
+            else:
+                new_item = {
+                    "item_id": new_sku,
+                    "item_name": new_name,
+                    "category": new_cat,
+                    "stock": new_stock,
+                    "unit_price": new_price,
+                }
+                inventory_df = pd.concat([inventory_df, pd.DataFrame([new_item])], ignore_index=True)
+                inventory_df = normalize_dataframe(inventory_df, numeric_columns=["stock", "unit_price"])
+                save_df(INVENTORY_FILE, inventory_df)
+                st.session_state["inventory_df"] = inventory_df
+                st.success(f"Added item '{new_name}' ({new_sku})!")
+                st.rerun()
+
+    with t_restock:
+        if not inventory_df.empty:
+            item_to_restock = st.selectbox("Select Item to Restock:", inventory_df["item_name"].tolist())
+            restock_amt = st.number_input("Quantity Added to Stock:", min_value=1, value=10)
+            
+            if st.button("📈 Confirm Stock Addition"):
+                r_idx = inventory_df.index[inventory_df["item_name"] == item_to_restock][0]
+                inventory_df.at[r_idx, "stock"] = int(inventory_df.at[r_idx, "stock"]) + restock_amt
+                save_df(INVENTORY_FILE, inventory_df)
+                st.session_state["inventory_df"] = inventory_df
+                st.success(f"Added +{restock_amt} units to {item_to_restock}!")
+                st.rerun()
+
 # ----------------------------------------------------
 # TAB 3: ADVISOR DASHBOARD
 # ----------------------------------------------------
 with tabs[2]:
     st.header("DECA Advisor & Student Progress Dashboard")
-    st.caption("Tracks required shift hours and monitors student progress[cite: 1].")
+    st.caption("Tracks required shift hours and monitors student progress.")
 
     completed_shifts = shifts_df[shifts_df["status"] == "COMPLETED"].copy() if "status" in shifts_df.columns else pd.DataFrame()
     if not completed_shifts.empty:
@@ -449,12 +529,44 @@ with tabs[2]:
             st.subheader("⚠️ Shifts Flagged for Review")
             st.dataframe(flagged_shifts[["student_id", "name", "check_in", "check_out", "hours_logged", "flagged"]], use_container_width=True, hide_index=True)
 
+    # DIRECT EDIT TOOL: Add New Student / Update Requirements
+    st.markdown("---")
+    with st.expander("👤 DECA Student Roster Management"):
+        col_s1, col_s2, col_s3 = st.columns(3)
+        st_id = col_s1.text_input("Student ID Number:", value=f"SIM100{len(roster_df)+1}")
+        st_fn = col_s2.text_input("First Name:")
+        st_ln = col_s3.text_input("Last Name:")
+
+        col_s4, col_s5, col_s6 = st.columns(3)
+        st_course = col_s4.selectbox("Enrolled Course:", ["1-Entrepreneurship", "2-Marketing", "6-Marketing", "7-SEM", "Accounting 2", "Store Management"])
+        st_track = col_s5.text_input("DECA Role / Track:", value="Store Officer")
+        st_req = col_s6.number_input("Required Hours:", min_value=1, max_value=100, value=10)
+
+        if st.button("➕ Register Student to Roster"):
+            if st_fn.strip() == "" or st_ln.strip() == "":
+                st.error("Please enter student first and last name.")
+            else:
+                new_student = {
+                    "student_id": st_id,
+                    "first_name": st_fn,
+                    "last_name": st_ln,
+                    "course": st_course,
+                    "track": st_track,
+                    "req_hours": st_req,
+                }
+                roster_df = pd.concat([roster_df, pd.DataFrame([new_student])], ignore_index=True)
+                roster_df = normalize_dataframe(roster_df, numeric_columns=["req_hours"])
+                save_df(ROSTER_FILE, roster_df)
+                st.session_state["roster_df"] = roster_df
+                st.success(f"Registered {st_fn} {st_ln} ({st_id})!")
+                st.rerun()
+
 # ----------------------------------------------------
 # TAB 4: SHEET MANAGER
 # ----------------------------------------------------
 with tabs[3]:
     st.header("Custom Database Manager")
-    st.caption("Directly inspect and update store CSV data files[cite: 1].")
+    st.caption("Directly inspect and update store CSV data files.")
 
     sheet_option = st.radio(
         "Select Sheet to Edit:",
