@@ -119,6 +119,21 @@ st.markdown(
 )
 
 
+# --- TIME FORMATTING HELPER ---
+def format_hours_mins(hours_val: float) -> str:
+    """Formats decimal hours into clean hours and minutes (e.g. '2 mins' or '1 hr 15 mins')."""
+    total_minutes = int(round(float(hours_val) * 60))
+    h = total_minutes // 60
+    m = total_minutes % 60
+    
+    if h > 0 and m > 0:
+        return f"{h} hr{'s' if h > 1 else ''} {m} min{'s' if m > 1 else ''}"
+    elif h > 0:
+        return f"{h} hr{'s' if h > 1 else ''}"
+    else:
+        return f"{m} min{'s' if m != 1 else ''}"
+
+
 # --- BARCODE KEYCARD RENDERER ---
 def render_barcode_keycard(student_id: str, barcode_val: str, student_name: str, track: str, photo_url: str = ""):
     avatar_html = f'<img src="{photo_url}" style="width: 60px; height: 60px; border-radius: 50%; border: 2px solid #3b82f6; margin-bottom: 8px; object-fit: cover;" />' if photo_url else '<div style="font-size: 32px; margin-bottom: 4px;">👤</div>'
@@ -436,7 +451,7 @@ tabs = st.tabs([
 ])
 
 # ----------------------------------------------------
-# TAB 1: ID & TIME CLOCK (WITH LIVE AUTO-SYNC PASS)
+# TAB 1: ID & TIME CLOCK (EXACT MINUTE & SECOND LOGGING)
 # ----------------------------------------------------
 with tabs[0]:
     st.header("Student Keytag Scanner & Shift Clock")
@@ -460,7 +475,7 @@ with tabs[0]:
             else:
                 student_name = f"{student['first_name']} {student['last_name']}"
                 
-                # AUTO-SYNC: Store the last scanned student so the pass card flips to them automatically!
+                # AUTO-SYNC: Store the last scanned student so pass card flips automatically
                 st.session_state["active_pass_sid"] = str(student["student_id"])
                 
                 active_shifts = shifts_df[(shifts_df["student_id"].astype(str) == str(student["student_id"])) & (shifts_df["status"] == "ACTIVE")]
@@ -485,7 +500,7 @@ with tabs[0]:
                     st.success(f"✅ Clocked IN: {student_name} ({student['track']}) at {now.strftime('%H:%M:%S')}")
                     st.rerun()
                 else:
-                    # Clock OUT
+                    # Clock OUT (Calculated to the exact second/minute)
                     idx = active_shifts.index[0]
                     checked_in = datetime.datetime.strptime(active_shifts.iloc[0]["check_in"], "%Y-%m-%d %H:%M:%S")
                     now = datetime.datetime.now()
@@ -497,7 +512,7 @@ with tabs[0]:
                         flagged = "YES (Exceeded Max Hours)"
                         st.warning(f"Shift exceeded limit ({MAX_SHIFT_HOURS}h). Duration capped and flagged for review.")
                     else:
-                        duration_hours = max(round(raw_hours, 2), 0.25)
+                        duration_hours = round(raw_hours, 4)
 
                     shifts_df.at[idx, "check_out"] = now.strftime("%Y-%m-%d %H:%M:%S")
                     shifts_df.at[idx, "hours_logged"] = duration_hours
@@ -507,7 +522,9 @@ with tabs[0]:
                     shifts_df = normalize_dataframe(shifts_df, numeric_columns=["hours_logged"])
                     save_df(SHIFTS_FILE, shifts_df)
                     st.session_state["shifts_df"] = shifts_df
-                    st.success(f"🛑 Clocked OUT: {student_name}. Logged {duration_hours:.2f} hours.")
+                    
+                    logged_str = format_hours_mins(duration_hours)
+                    st.success(f"🛑 Clocked OUT: {student_name}. Logged {logged_str}!")
                     st.rerun()
 
     with col_info:
@@ -531,7 +548,7 @@ with tabs[0]:
         student_labels = list(student_opts.keys())
         student_ids = list(student_opts.values())
 
-        # Auto-Select the student who just scanned, or fallback to the first student
+        # Auto-Select student who just scanned
         active_sid = st.session_state.get("active_pass_sid", student_ids[0])
         default_index = student_ids.index(active_sid) if active_sid in student_ids else 0
 
@@ -721,7 +738,7 @@ with tabs[1]:
                 st.rerun()
 
 # ----------------------------------------------------
-# TAB 3: ADVISOR DASHBOARD
+# TAB 3: ADVISOR DASHBOARD (EXACT MINUTES DISPLAY)
 # ----------------------------------------------------
 with tabs[2]:
     st.header("DECA Advisor & Student Progress Dashboard")
@@ -740,15 +757,19 @@ with tabs[2]:
 
     a1, a2, a3 = st.columns(3)
     a1.metric("Enrolled Students", len(summary_df))
-    a2.metric("Total Hours Completed", f"{summary_df['hours_logged'].sum():.1f} hrs")
+    
+    total_hours_sum = summary_df['hours_logged'].sum()
+    a2.metric("Total Time Completed", format_hours_mins(total_hours_sum))
     a3.metric("Average Course Completion", f"{summary_df['progress_%'].mean():.1f}%")
 
     st.subheader("Student Hours Progress Roster")
     for idx, row in summary_df.iterrows():
-        c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1, 2])
+        c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1.2, 1.8])
         c_name.markdown(f"**{row['first_name']} {row['last_name']}** (`ID: {row['student_id']}` | `BC: {row['barcode_id']}`)")
         c_course.caption(f"{row['course']} • {row['track']}")
-        c_hours.markdown(f"**{row['hours_logged']:.1f}** / {row['req_hours']} hrs")
+        
+        logged_text = format_hours_mins(row['hours_logged'])
+        c_hours.markdown(f"**{logged_text}** / {row['req_hours']} hrs")
         pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0)
         c_bar.progress(pct, text=f"{row['progress_%']}%")
 
