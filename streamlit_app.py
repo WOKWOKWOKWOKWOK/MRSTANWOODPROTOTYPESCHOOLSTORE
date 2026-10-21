@@ -435,7 +435,7 @@ tabs = st.tabs([
 ])
 
 # ----------------------------------------------------
-# TAB 1: ID & TIME CLOCK (100% HARDWARE SCANNER DRIVEN)
+# TAB 1: ID & TIME CLOCK
 # ----------------------------------------------------
 with tabs[0]:
     st.header("Student Keytag Scanner & Shift Clock")
@@ -741,41 +741,60 @@ with tabs[2]:
         c_bar.progress(pct, text=f"{row['progress_%']}%")
 
     st.markdown("---")
-    with st.expander("🔗 Profile Registrar: Scan & Connect Barcode / Photo to Student"):
-        if roster_df.empty:
-            st.warning("No students in roster to edit.")
-        else:
-            r_opts = {f"{row['first_name']} {row['last_name']} (ID: {row['student_id']})": row['student_id'] for _, row in roster_df.iterrows()}
-            selected_student_key = st.selectbox("Select Student Profile to Edit:", list(r_opts.keys()))
+    
+    # --- DEDICATED HARDWARE BARCODE LINKING TERMINAL ---
+    st.subheader("⚡ Rapid Barcode Keytag Pairing Terminal")
+    st.caption("Click into the barcode field below and scan the physical keytag with your USB scanner.")
+
+    if roster_df.empty:
+        st.warning("No students in roster to link.")
+    else:
+        r_opts = {f"{row['first_name']} {row['last_name']} (ID: {row['student_id']})": row['student_id'] for _, row in roster_df.iterrows()}
+        
+        with st.form(key="rapid_pair_form", clear_on_submit=False):
+            selected_student_key = st.selectbox("1. Select Student Profile:", list(r_opts.keys()))
             target_sid = r_opts[selected_student_key]
             current_st = student_lookup_by_code(target_sid)
-
-            col_link1, col_link2, col_link3 = st.columns(3)
-            edit_id = col_link1.text_input("Student ID#:", value=str(current_st["student_id"]))
             
-            # Scan hardware keytag barcode straight into this field to assign it
-            edit_barcode = col_link2.text_input("Scan/Assign Keytag Barcode:", value=str(current_st["barcode_id"]))
-            edit_photo = col_link3.text_input("Photo Image URL:", value=str(current_st.get("photo_url", "")))
+            scanned_pair_barcode = st.text_input(
+                "2. Click Here & Zap Physical Keytag with USB Scanner:", 
+                value=str(current_st["barcode_id"]),
+                help="Pull the trigger on your hardware scanner. It will auto-fill this input box."
+            )
+            
+            save_pair_btn = st.form_submit_button("🔗 Link Barcode to Student Profile")
 
-            photo_file = st.file_uploader("Upload Profile Photo Image:", type=["jpg", "png", "jpeg"])
+        if save_pair_btn:
+            r_idx = roster_df.index[roster_df["student_id"].astype(str) == str(target_sid)][0]
+            roster_df.at[r_idx, "barcode_id"] = scanned_pair_barcode.strip()
+            
+            save_df(ROSTER_FILE, roster_df)
+            st.session_state["roster_df"] = roster_df
+            st.success(f"✅ Keytag Barcode '{scanned_pair_barcode.strip()}' successfully linked to {current_st['first_name']} {current_st['last_name']}!")
+            st.rerun()
+
+    st.markdown("---")
+    
+    # Optional Headshot Upload
+    with st.expander("📸 Upload Student Headshot Photo (Optional)"):
+        if not roster_df.empty:
+            photo_student_key = st.selectbox("Select Student for Headshot Upload:", list(r_opts.keys()), key="headshot_select")
+            photo_target_sid = r_opts[photo_student_key]
+            photo_st = student_lookup_by_code(photo_target_sid)
+
+            photo_file = st.file_uploader("Upload Student Face/Profile Image (JPG/PNG):", type=["jpg", "png", "jpeg"])
             if photo_file is not None:
                 assets_dir = os.path.join(ROOT_DIR, "photos")
                 os.makedirs(assets_dir, exist_ok=True)
-                file_path = os.path.join(assets_dir, f"{edit_id}.png")
+                file_path = os.path.join(assets_dir, f"{photo_target_sid}.png")
                 with open(file_path, "wb") as f:
                     f.write(photo_file.getbuffer())
-                edit_photo = f"photos/{edit_id}.png"
-                st.success("Uploaded photo saved!")
-
-            if st.button("💾 Save Profile Connections"):
-                r_idx = roster_df.index[roster_df["student_id"].astype(str) == str(target_sid)][0]
-                roster_df.at[r_idx, "student_id"] = edit_id.strip()
-                roster_df.at[r_idx, "barcode_id"] = edit_barcode.strip()
-                roster_df.at[r_idx, "photo_url"] = edit_photo.strip()
                 
+                r_idx = roster_df.index[roster_df["student_id"].astype(str) == str(photo_target_sid)][0]
+                roster_df.at[r_idx, "photo_url"] = f"photos/{photo_target_sid}.png"
                 save_df(ROSTER_FILE, roster_df)
                 st.session_state["roster_df"] = roster_df
-                st.success(f"Updated profile connections for {current_st['first_name']} {current_st['last_name']}!")
+                st.success(f"Updated profile photo for {photo_st['first_name']} {photo_st['last_name']}!")
                 st.rerun()
 
     st.markdown("---")
