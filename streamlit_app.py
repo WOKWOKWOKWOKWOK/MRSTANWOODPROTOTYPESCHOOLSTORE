@@ -122,6 +122,12 @@ def load_or_create_df(file_path: str, default_df: pd.DataFrame) -> pd.DataFrame:
     except Exception:
         default_df.to_csv(file_path, index=False)
         return default_df.copy()
+
+    # Ensure any new columns from default_df exist in loaded df
+    for col in default_df.columns:
+        if col not in df.columns:
+            df[col] = default_df[col].iloc[0] if len(default_df) > 0 and col in default_df else "NO"
+
     return df
 
 
@@ -165,11 +171,17 @@ def reload_all_data():
     st.session_state["roster_df"] = normalize_dataframe(
         load_or_create_df(ROSTER_FILE, get_default_roster()), numeric_columns=["req_hours"]
     )
+    
+    shifts_raw = load_or_create_df(SHIFTS_FILE, get_default_shifts())
+    if "flagged" not in shifts_raw.columns:
+        shifts_raw["flagged"] = "NO"
+    
     st.session_state["shifts_df"] = normalize_dataframe(
-        load_or_create_df(SHIFTS_FILE, get_default_shifts()),
+        shifts_raw,
         numeric_columns=["hours_logged"],
         text_columns=["student_id", "name", "check_in", "check_out", "shift_type", "status", "flagged"],
     )
+    
     st.session_state["inventory_df"] = normalize_dataframe(
         load_or_create_df(INVENTORY_FILE, get_default_inventory()), numeric_columns=["stock", "unit_price"]
     )
@@ -214,7 +226,7 @@ with st.sidebar:
 # Metric Bar
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Enrolled Students", len(roster_df))
-m2.metric("Active Shifts", int((shifts_df["status"] == "ACTIVE").sum()))
+m2.metric("Active Shifts", int((shifts_df["status"] == "ACTIVE").sum()) if "status" in shifts_df.columns else 0)
 low_stock_count = int((inventory_df["stock"] <= low_stock_limit).sum())
 m3.metric("Total Items Stocked", int(inventory_df["stock"].sum()), delta=f"{low_stock_count} low" if low_stock_count else "Stock OK", delta_color="inverse" if low_stock_count else "normal")
 m4.metric("Sales Recorded", len(sales_df))
@@ -302,7 +314,7 @@ with tabs[0]:
 
     with col_info:
         st.subheader("Currently Clocked In")
-        active_now = shifts_df[shifts_df["status"] == "ACTIVE"]
+        active_now = shifts_df[shifts_df["status"] == "ACTIVE"] if "status" in shifts_df.columns else pd.DataFrame()
         if active_now.empty:
             st.info("No students are currently clocked in.")
         else:
@@ -390,12 +402,11 @@ with tabs[1]:
                 pass
             return ""
 
-        # Backward/Forward compatible Pandas Styler (.map vs .applymap)
         styler = inventory_df[["item_id", "item_name", "category", "stock", "unit_price"]].style
         if hasattr(styler, "map"):
             styled_inventory = styler.map(highlight_low_stock, subset=["stock"])
         else:
-            styled_inventory = styler.applymap(highlight_low_stock, subset=["subset" if "subset" in dir() else "stock"])
+            styled_inventory = styler.applymap(highlight_low_stock, subset=["stock"])
 
         st.dataframe(styled_inventory, use_container_width=True, hide_index=True)
 
@@ -406,7 +417,7 @@ with tabs[2]:
     st.header("DECA Advisor & Student Progress Dashboard")
     st.caption("Tracks required shift hours and monitors student progress[cite: 1].")
 
-    completed_shifts = shifts_df[shifts_df["status"] == "COMPLETED"].copy()
+    completed_shifts = shifts_df[shifts_df["status"] == "COMPLETED"].copy() if "status" in shifts_df.columns else pd.DataFrame()
     if not completed_shifts.empty:
         completed_shifts["hours_logged"] = pd.to_numeric(completed_shifts["hours_logged"], errors="coerce").fillna(0)
         hours_by_student = completed_shifts.groupby("student_id")["hours_logged"].sum().reset_index()
@@ -431,11 +442,12 @@ with tabs[2]:
         pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0)
         c_bar.progress(pct, text=f"{row['progress_%']}%")
 
-    flagged_shifts = shifts_df[shifts_df["flagged"].str.startswith("YES", na=False)]
-    if not flagged_shifts.empty:
-        st.markdown("---")
-        st.subheader("⚠️ Shifts Flagged for Review")
-        st.dataframe(flagged_shifts[["student_id", "name", "check_in", "check_out", "hours_logged", "flagged"]], use_container_width=True, hide_index=True)
+    if "flagged" in shifts_df.columns:
+        flagged_shifts = shifts_df[shifts_df["flagged"].astype(str).str.startswith("YES", na=False)]
+        if not flagged_shifts.empty:
+            st.markdown("---")
+            st.subheader("⚠️ Shifts Flagged for Review")
+            st.dataframe(flagged_shifts[["student_id", "name", "check_in", "check_out", "hours_logged", "flagged"]], use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------
 # TAB 4: SHEET MANAGER
