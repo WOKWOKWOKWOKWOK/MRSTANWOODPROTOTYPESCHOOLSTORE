@@ -172,6 +172,39 @@ def render_barcode_keycard(student_id: str, barcode_val: str, student_name: str,
     components.html(html_code, height=270)
 
 
+# --- LIVE WEBCAM BARCODE DECODER COMPONENT ---
+def render_live_camera_barcode_scanner():
+    """Renders a live browser camera stream that decodes barcodes automatically."""
+    html_code = """
+    <div style="text-align: center; font-family: sans-serif; color: white;">
+        <video id="video" style="width: 100%; max-width: 400px; height: 240px; border: 2px solid #3b82f6; border-radius: 12px; background: #000;"></video>
+        <div id="scan-status" style="margin-top: 8px; font-weight: bold; color: #60a5fa;">📷 Point keytag barcode at camera...</div>
+    </div>
+    <script src="https://unpkg.com/@zxing/library@latest"></script>
+    <script>
+        const codeReader = new ZXing.BrowserMultiFormatReader();
+        const videoElem = document.getElementById('video');
+        const statusElem = document.getElementById('scan-status');
+
+        codeReader.decodeFromVideoDevice(null, 'video', (result, err) => {
+            if (result) {
+                statusElem.innerText = "✅ Scanned Barcode: " + result.text;
+                statusElem.style.color = "#4ade80";
+                
+                // Copy barcode to clipboard or notify parent
+                if (navigator.clipboard) {
+                    navigator.clipboard.writeText(result.text);
+                }
+            }
+        }).catch((err) => {
+            statusElem.innerText = "Camera access error or permission denied.";
+            statusElem.style.color = "#f87171";
+        });
+    </script>
+    """
+    components.html(html_code, height=310)
+
+
 # --- DATA HELPERS ---
 def normalize_dataframe(df: pd.DataFrame, numeric_columns=None, text_columns=None) -> pd.DataFrame:
     if df is None:
@@ -211,7 +244,7 @@ def save_df(file_path: str, df: pd.DataFrame) -> None:
     df.to_csv(file_path, index=False)
 
 
-# Default Datasets (With barcode_id and photo_url columns connected)
+# Default Datasets
 def get_default_roster() -> pd.DataFrame:
     return pd.DataFrame([
         {"student_id": "SIM1001", "barcode_id": "BC-1001", "first_name": "Caroline", "last_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req_hours": 20, "photo_url": ""},
@@ -331,28 +364,28 @@ tabs = st.tabs([
 ])
 
 # ----------------------------------------------------
-# TAB 1: ID & TIME CLOCK (CONNECTING PHOTO + ID# + BARCODE)
+# TAB 1: ID & TIME CLOCK
 # ----------------------------------------------------
 with tabs[0]:
     st.header("Student ID Scanner & Shift Clock")
-    st.caption("Scan keytag card (Hardware USB or Camera) or manually type ID/Barcode.")
+    st.caption("Scan keytag card (Hardware USB Scanner or Auto-Decoding Webcam).")
 
     col_scan, col_info = st.columns([1.2, 1])
 
     with col_scan:
-        scan_mode = st.radio("Choose Scanner Mode:", ["USB Keytag Scanner / Manual", "Camera Photo Scan"], horizontal=True)
+        scan_mode = st.radio("Choose Scanner Mode:", ["USB Keytag Scanner / Manual Input", "Live Camera Auto-Scanner"], horizontal=True)
 
         scanned_input = ""
 
-        if scan_mode == "USB Keytag Scanner / Manual":
+        if scan_mode == "USB Keytag Scanner / Manual Input":
             with st.form(key="scanner_form", clear_on_submit=True):
-                scanned_barcode = st.text_input("Scan Card / Type ID or Barcode Here:", key="barcode_field")
+                scanned_barcode = st.text_input("Scan Keytag Card / Type Barcode or ID Here:", key="barcode_field")
                 shift_type = st.selectbox(
                     "Select Shift Type:",
                     ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"],
                 )
-                submit_scan = st.form_submit_button("⚡ Process Check-In")
-            if submit_scan:
+                submit_scan = st.form_submit_button("⚡ Process Shift Check-In")
+            if submit_scan and scanned_barcode:
                 scanned_input = scanned_barcode
         else:
             shift_type = st.selectbox(
@@ -360,15 +393,18 @@ with tabs[0]:
                 ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"],
                 key="cam_shift_type"
             )
-            camera_image = st.camera_input("📷 Take Photo of Keytag or Student ID Card")
-            if camera_image:
-                st.info("Photo captured!")
-                scanned_input = st.text_input("Enter/Confirm ID or Barcode Digits in Photo:", key="cam_code_input")
+            render_live_camera_barcode_scanner()
+            
+            with st.form(key="camera_form", clear_on_submit=True):
+                scanned_barcode_cam = st.text_input("Auto-Scanned Code (Paste / Confirm):", key="cam_barcode_field")
+                submit_cam_scan = st.form_submit_button("⚡ Process Scanned Keytag")
+            if submit_cam_scan and scanned_barcode_cam:
+                scanned_input = scanned_barcode_cam
 
         if scanned_input:
             student = student_lookup_by_code(scanned_input)
             if student is None:
-                st.error(f"No student found matching ID/Barcode '{scanned_input}'.")
+                st.error(f"No student profile found matching Barcode/ID '{scanned_input}'.")
             else:
                 student_name = f"{student['first_name']} {student['last_name']}"
                 active_shifts = shifts_df[(shifts_df["student_id"].astype(str) == str(student["student_id"])) & (shifts_df["status"] == "ACTIVE")]
@@ -544,7 +580,7 @@ with tabs[1]:
         st.dataframe(styled_inventory, use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------
-# TAB 3: ADVISOR DASHBOARD (LINK PHOTO + ID# + BARCODE)
+# TAB 3: ADVISOR DASHBOARD
 # ----------------------------------------------------
 with tabs[2]:
     st.header("DECA Advisor & Student Progress Dashboard")
@@ -575,7 +611,6 @@ with tabs[2]:
         pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0)
         c_bar.progress(pct, text=f"{row['progress_%']}%")
 
-    # LINK PHOTO, ID#, AND BARCODE TOOL
     st.markdown("---")
     with st.expander("🔗 Profile Registrar: Connect Barcode & Photo to Student"):
         if roster_df.empty:
@@ -593,7 +628,6 @@ with tabs[2]:
 
             photo_file = st.file_uploader("Upload Profile Photo Image:", type=["jpg", "png", "jpeg"])
             if photo_file is not None:
-                # Save uploaded photo to local assets folder
                 assets_dir = os.path.join(ROOT_DIR, "photos")
                 os.makedirs(assets_dir, exist_ok=True)
                 file_path = os.path.join(assets_dir, f"{edit_id}.png")
