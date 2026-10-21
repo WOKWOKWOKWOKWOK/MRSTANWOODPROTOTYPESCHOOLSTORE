@@ -9,6 +9,7 @@ st.set_page_config(
     page_title="Trojan Market - Store Management System",
     page_icon="🛡️",
     layout="wide",
+    initial_sidebar_state="collapsed",  # Hide sidebar by default
 )
 
 # --- FILE STORAGE & CONFIGURATION ---
@@ -20,17 +21,18 @@ SALES_FILE = os.path.join(ROOT_DIR, "sales.csv")
 
 MAX_SHIFT_HOURS = 4.0
 
-# --- STYLING ---
+# --- STYLING (Sidebar hidden completely via CSS) ---
 st.markdown(
     """
     <style>
+    /* Hide Streamlit Sidebar UI components completely */
+    [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {
+        display: none !important;
+    }
+    
     html, body, [data-testid="stAppViewContainer"] {
         background-color: #0b1120 !important;
         color: #e5e7eb !important;
-    }
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0f172a 0%, #111827 100%) !important;
-        border-right: 1px solid rgba(148, 163, 184, 0.2);
     }
     .block-container {
         padding-top: 1.5rem;
@@ -196,33 +198,20 @@ def reload_all_data():
     )
 
 
-# Load session state
-if "roster_df" not in st.session_state:
-    reload_all_data()
-
-roster_df = st.session_state["roster_df"]
-shifts_df = st.session_state["shifts_df"]
-inventory_df = st.session_state["inventory_df"]
-sales_df = st.session_state["sales_df"]
-
-
-def student_lookup(student_id: str) -> pd.Series | None:
-    match = roster_df[roster_df["student_id"].str.upper() == student_id.strip().upper()]
-    return None if match.empty else match.iloc[0]
-
-
-# --- REVTRAK API SYNC ENGINE ---
-def sync_revtrak_orders():
-    """Fetches recent online orders from RevTrak API and deducts stock."""
+# --- AUTOMATED REVTRAK SYNC ENGINE ---
+def sync_revtrak_orders(silent=False):
+    """Fetches recent online orders from RevTrak API and deducts stock automatically."""
     if "revtrak" not in st.secrets:
-        st.error("RevTrak secrets not configured. Please set up `.streamlit/secrets.toml` with `api_key` and `api_url`.")
+        if not silent:
+            st.error("RevTrak secrets not configured. Please set up `.streamlit/secrets.toml`.")
         return
 
     api_url = st.secrets["revtrak"].get("api_url", "")
     api_key = st.secrets["revtrak"].get("api_key", "")
 
     if not api_url or not api_key:
-        st.error("Missing RevTrak API credentials in secrets configuration.")
+        if not silent:
+            st.error("Missing RevTrak API credentials in secrets configuration.")
         return
 
     headers = {
@@ -231,14 +220,15 @@ def sync_revtrak_orders():
     }
 
     try:
-        response = requests.get(f"{api_url}/orders/recent", headers=headers, timeout=5)
+        response = requests.get(f"{api_url}/orders/recent", headers=headers, timeout=3)
         if response.status_code != 200:
-            st.error(f"RevTrak API call failed (HTTP {response.status_code}): {response.text}")
+            if not silent:
+                st.error(f"RevTrak API call failed (HTTP {response.status_code}): {response.text}")
             return
 
         orders = response.json().get("orders", [])
-        inv_df = st.session_state["inventory_df"]
-        sls_df = st.session_state["sales_df"]
+        inv_df = st.session_state.get("inventory_df", load_or_create_df(INVENTORY_FILE, get_default_inventory()))
+        sls_df = st.session_state.get("sales_df", load_or_create_df(SALES_FILE, get_default_sales()))
         updated = False
 
         for order in orders:
@@ -272,35 +262,55 @@ def sync_revtrak_orders():
             save_df(SALES_FILE, sls_df)
             st.session_state["inventory_df"] = inv_df
             st.session_state["sales_df"] = sls_df
-            st.success("Synchronized online RevTrak sales with store inventory!")
+            st.toast("⚡ RevTrak Auto-Sync: New online sales imported & inventory updated!")
             st.rerun()
         else:
-            st.info("Inventory is already up to date with RevTrak.")
+            if not silent:
+                st.info("Inventory is already up to date with RevTrak.")
 
     except Exception as e:
-        st.error(f"RevTrak sync error: {e}")
+        if not silent:
+            st.error(f"RevTrak sync error: {e}")
 
 
-# --- SIDEBAR & HEADER ---
+# Initialize session state data
+if "roster_df" not in st.session_state:
+    reload_all_data()
+
+# AUTOMATED SILENT SYNC ON PAGE LOAD
+sync_revtrak_orders(silent=True)
+
+roster_df = st.session_state["roster_df"]
+shifts_df = st.session_state["shifts_df"]
+inventory_df = st.session_state["inventory_df"]
+sales_df = st.session_state["sales_df"]
+
+
+def student_lookup(student_id: str) -> pd.Series | None:
+    match = roster_df[roster_df["student_id"].str.upper() == student_id.strip().upper()]
+    return None if match.empty else match.iloc[0]
+
+
+# --- HEADER & TOP CONTROLS (MOVED OUT OF SIDEBAR) ---
 st.title("Trojan Market")
 st.caption("Simsbury High School DECA • Operations & Hours Dashboard")
 
-with st.sidebar:
-    st.markdown("### Store Controls")
-    st.info("Central management system for student time tracking, POS, and DECA course progress.")
-
-    if st.button("🔄 Refresh Local Data"):
-        reload_all_data()
-        st.rerun()
-
-    st.markdown("---")
-    st.markdown("### RevTrak Integration")
-    if st.button("🌐 Sync RevTrak Sales"):
-        sync_revtrak_orders()
-
-    st.markdown("---")
-    low_stock_limit = st.slider("Low stock warning threshold:", min_value=1, max_value=20, value=5)
-
+# Top System Controls Expander (Replaces Sidebar)
+with st.expander("⚙️ Store Controls & System Settings"):
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.5, 1, 1])
+    with ctrl_col1:
+        low_stock_limit = st.slider("Low stock warning threshold:", min_value=1, max_value=20, value=5)
+    with ctrl_col2:
+        st.write("")
+        st.write("")
+        if st.button("🔄 Refresh Local Data"):
+            reload_all_data()
+            st.rerun()
+    with ctrl_col3:
+        st.write("")
+        st.write("")
+        if st.button("🌐 Force Manual RevTrak Sync"):
+            sync_revtrak_orders(silent=False)
 
 # Metric Bar
 m1, m2, m3, m4 = st.columns(4)
@@ -312,7 +322,7 @@ m4.metric("Sales Recorded", len(sales_df))
 
 st.write("")
 
-# --- TABS ---
+# --- MAIN WORKFLOW TABS ---
 tabs = st.tabs([
     "🛡️ ID & Time Clock",
     "💸 POS & Inventory",
@@ -676,7 +686,7 @@ with tabs[3]:
             save_df(INVENTORY_FILE, st.session_state["inventory_df"])
         else:
             st.session_state["sales_df"] = normalize_dataframe(edited_df, numeric_columns=["quantity", "total_price"])
-            save_df(SALES_FILE, save_df(SALES_FILE, st.session_state["sales_df"]))
+            save_df(SALES_FILE, st.session_state["sales_df"])
 
         st.success("Changes saved successfully to disk.")
         st.rerun()
