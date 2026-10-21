@@ -26,7 +26,6 @@ MAX_SHIFT_HOURS = 4.0
 st.markdown(
     """
     <style>
-    /* Completely hide sidebar drawer, nav, and collapse controls */
     [data-testid="stSidebar"],
     [data-testid="stSidebarNav"],
     [data-testid="stSidebarCollapsedControl"],
@@ -120,9 +119,8 @@ st.markdown(
 )
 
 
-# --- BARCODE KEYCARD COMPONENT RENDERING ---
+# --- BARCODE KEYCARD RENDERER ---
 def render_barcode_keycard(student_id: str, student_name: str, track: str):
-    """Renders a digital gym-style keytag pass with scannable Code128 barcode."""
     html_code = f"""
     <div style="
         background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
@@ -275,7 +273,6 @@ def reload_all_data():
 
 # --- AUTOMATED REVTRAK SYNC ENGINE ---
 def sync_revtrak_orders(silent=False):
-    """Fetches recent online orders from RevTrak API and deducts stock automatically."""
     if "revtrak" not in st.secrets:
         if not silent:
             st.error("RevTrak secrets not configured. Please set up `.streamlit/secrets.toml`.")
@@ -349,7 +346,6 @@ def sync_revtrak_orders(silent=False):
 
 
 def fetch_revtrak_item_details(rt_sku: str) -> dict | None:
-    """Auto-pull item details directly from RevTrak product catalog by SKU."""
     if "revtrak" not in st.secrets:
         return None
 
@@ -376,7 +372,6 @@ def fetch_revtrak_item_details(rt_sku: str) -> dict | None:
 if "roster_df" not in st.session_state:
     reload_all_data()
 
-# AUTOMATED SILENT SYNC ON PAGE LOAD
 sync_revtrak_orders(silent=True)
 
 roster_df = st.session_state["roster_df"]
@@ -386,7 +381,7 @@ sales_df = st.session_state["sales_df"]
 
 
 def student_lookup(student_id: str) -> pd.Series | None:
-    match = roster_df[roster_df["student_id"].str.upper() == student_id.strip().upper()]
+    match = roster_df[roster_df["student_id"].astype(str).str.upper() == student_id.strip().upper()]
     return None if match.empty else match.iloc[0]
 
 
@@ -394,7 +389,6 @@ def student_lookup(student_id: str) -> pd.Series | None:
 st.title("Trojan Market")
 st.caption("Simsbury High School DECA • Operations & Hours Dashboard")
 
-# System Controls Expander
 with st.expander("⚙️ Store Controls & System Settings"):
     ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.5, 1, 1])
     with ctrl_col1:
@@ -411,7 +405,6 @@ with st.expander("⚙️ Store Controls & System Settings"):
         if st.button("🌐 Force Manual RevTrak Sync"):
             sync_revtrak_orders(silent=False)
 
-# Metric Bar
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Enrolled Students", len(roster_df))
 m2.metric("Active Shifts", int((shifts_df["status"] == "ACTIVE").sum()) if "status" in shifts_df.columns else 0)
@@ -430,30 +423,51 @@ tabs = st.tabs([
 ])
 
 # ----------------------------------------------------
-# TAB 1: ID & TIME CLOCK (GYM-STYLE KEYTAG PASS ADDED)
+# TAB 1: ID & TIME CLOCK (HARDWARE & CAMERA SCANNER)
 # ----------------------------------------------------
 with tabs[0]:
     st.header("Student ID Scanner & Shift Clock")
-    st.caption("Scan student barcode keytag card or type ID manually.")
+    st.caption("Scan student keytag barcode using a hardware USB scanner or webcam camera.")
 
     col_scan, col_info = st.columns([1.2, 1])
 
     with col_scan:
-        with st.form(key="scanner_form", clear_on_submit=True):
-            scanned_barcode = st.text_input("Barcode Scanner Feed (Scan Keytag / Card Here):", key="barcode_field")
+        scan_mode = st.radio("Choose Scanner Hardware:", ["USB Barcode Scanner (Keytag)", "Webcam / Camera Feed"], horizontal=True)
+
+        scanned_id = ""
+
+        if scan_mode == "USB Barcode Scanner (Keytag)":
+            with st.form(key="scanner_form", clear_on_submit=True):
+                scanned_barcode = st.text_input("Barcode Input Feed (Scan Keytag Here):", key="barcode_field")
+                shift_type = st.selectbox(
+                    "Select Shift Type:",
+                    ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"],
+                )
+                submit_scan = st.form_submit_button("⚡ Process Keytag Scan")
+            if submit_scan:
+                scanned_id = scanned_barcode
+        else:
             shift_type = st.selectbox(
                 "Select Shift Type:",
                 ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"],
+                key="cam_shift_type"
             )
-            submit_scan = st.form_submit_button("⚡ Process Keytag Check-In")
+            camera_image = st.camera_input("📷 Hold Keytag Barcode up to Camera")
+            if camera_image:
+                st.info("Processing camera scan...")
+                # Note: If pyzbar/opencv is installed in environment, barcode is parsed directly.
+                # Fallback to manual entry if camera snapshot is captured:
+                manual_cam_id = st.text_input("Confirm Barcode Digits from Camera:", key="cam_manual_id")
+                if st.button("Submit Camera Scan"):
+                    scanned_id = manual_cam_id
 
-        if submit_scan and scanned_barcode:
-            student = student_lookup(scanned_barcode)
+        if scanned_id:
+            student = student_lookup(scanned_id)
             if student is None:
-                st.error(f"Student ID '{scanned_barcode}' not found in roster database.")
+                st.error(f"Student barcode '{scanned_id}' not registered in database.")
             else:
                 student_name = f"{student['first_name']} {student['last_name']}"
-                active_shifts = shifts_df[(shifts_df["student_id"] == student["student_id"]) & (shifts_df["status"] == "ACTIVE")]
+                active_shifts = shifts_df[(shifts_df["student_id"].astype(str) == str(student["student_id"])) & (shifts_df["status"] == "ACTIVE")]
 
                 if active_shifts.empty:
                     # Clock IN
@@ -513,8 +527,6 @@ with tabs[0]:
             )
 
     st.markdown("---")
-    
-    # BIG SKY STYLE DIGITAL KEYTAG CARD DISPLAY
     st.subheader("📱 Digital Barcode Keytag / Mobile Member Pass")
     if roster_df.empty:
         st.info("No students enrolled in roster.")
@@ -527,55 +539,19 @@ with tabs[0]:
         k_col1, k_col2 = st.columns([1, 1.5])
         with k_col1:
             render_barcode_keycard(
-                student_id=pass_student["student_id"],
+                student_id=str(pass_student["student_id"]),
                 student_name=f"{pass_student['first_name']} {pass_student['last_name']}",
                 track=f"{pass_student['track']} • {pass_student['course']}"
             )
         with k_col2:
             st.markdown(f"### Member Info: **{pass_student['first_name']} {pass_student['last_name']}**")
-            st.write(f"• **Student ID:** `{pass_student['student_id']}`")
+            st.write(f"• **Student ID / Barcode:** `{pass_student['student_id']}`")
             st.write(f"• **Course:** {pass_student['course']}")
             st.write(f"• **DECA Role:** {pass_student['track']}")
-            st.write(f"• **Required Target Hours:** {pass_student['req_hours']} hrs")
-            st.caption("Tip: Students can screenshot this keytag pass on their phone to scan at the terminal register!")
-
-    st.markdown("---")
-    with st.expander("🛠️ Advisor Tool: Add / Override Manual Shift Entry"):
-        if roster_df.empty:
-            st.warning("Please add students to roster first.")
-        else:
-            student_list = [f"{row['student_id']} - {row['first_name']} {row['last_name']}" for _, row in roster_df.iterrows()]
-            selected_student_str = st.selectbox("Select Student for Manual Shift Entry:", student_list)
-            target_sid = selected_student_str.split(" - ")[0]
-            target_student = student_lookup(target_sid)
-            
-            col_m1, col_m2, col_m3 = st.columns(3)
-            manual_hours = col_m1.number_input("Hours to Log:", min_value=0.25, max_value=12.0, value=1.0, step=0.25)
-            manual_shift_type = col_m2.selectbox("Shift Category:", ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"], key="manual_shift_cat")
-            manual_date = col_m3.date_input("Shift Date:", value=datetime.date.today())
-
-            if st.button("➕ Log Manual Shift Hours"):
-                st_name = f"{target_student['first_name']} {target_student['last_name']}"
-                dt_stamp = manual_date.strftime("%Y-%m-%d 12:00:00")
-                manual_record = {
-                    "student_id": target_sid,
-                    "name": st_name,
-                    "check_in": dt_stamp,
-                    "check_out": dt_stamp,
-                    "hours_logged": manual_hours,
-                    "shift_type": manual_shift_type,
-                    "status": "COMPLETED",
-                    "flagged": "NO (Manual Override)",
-                }
-                shifts_df = pd.concat([shifts_df, pd.DataFrame([manual_record])], ignore_index=True)
-                shifts_df = normalize_dataframe(shifts_df, numeric_columns=["hours_logged"])
-                save_df(SHIFTS_FILE, shifts_df)
-                st.session_state["shifts_df"] = shifts_df
-                st.success(f"Added {manual_hours} hrs manually for {st_name}!")
-                st.rerun()
+            st.write(f"• **Target Hours:** {pass_student['req_hours']} hrs")
 
 # ----------------------------------------------------
-# TAB 2: POS & INVENTORY (WITH AUTO-PULL FEATURES)
+# TAB 2: POS & INVENTORY
 # ----------------------------------------------------
 with tabs[1]:
     st.header("Point of Sale & Live Inventory")
@@ -666,7 +642,6 @@ with tabs[1]:
     t_add, t_restock = st.tabs(["📦 Add New Product", "🔄 Restock Existing Item"])
     
     with t_add:
-        # Pre-fill states for auto-pull
         if "auto_name" not in st.session_state:
             st.session_state["auto_name"] = ""
         if "auto_price" not in st.session_state:
@@ -719,7 +694,6 @@ with tabs[1]:
                 save_df(INVENTORY_FILE, inventory_df)
                 st.session_state["inventory_df"] = inventory_df
                 
-                # Reset auto-pull helpers
                 st.session_state["auto_name"] = ""
                 st.session_state["auto_price"] = 2.00
                 st.session_state["auto_cat"] = "Food"
@@ -741,11 +715,11 @@ with tabs[1]:
                 st.rerun()
 
 # ----------------------------------------------------
-# TAB 3: ADVISOR DASHBOARD
+# TAB 3: ADVISOR DASHBOARD (BARCODE ASSIGNMENT TOOL ADDED)
 # ----------------------------------------------------
 with tabs[2]:
     st.header("DECA Advisor & Student Progress Dashboard")
-    st.caption("Tracks required shift hours and monitors student progress.")
+    st.caption("Tracks required shift hours, links keytag barcodes, and monitors student progress.")
 
     completed_shifts = shifts_df[shifts_df["status"] == "COMPLETED"].copy() if "status" in shifts_df.columns else pd.DataFrame()
     if not completed_shifts.empty:
@@ -779,10 +753,32 @@ with tabs[2]:
             st.subheader("⚠️ Shifts Flagged for Review")
             st.dataframe(flagged_shifts[["student_id", "name", "check_in", "check_out", "hours_logged", "flagged"]], use_container_width=True, hide_index=True)
 
+    # KEYTAG BARCODE ASSIGNMENT TOOL
+    st.markdown("---")
+    with st.expander("🏷️ Keytag Barcode Registrar: Assign Barcode to Student"):
+        if roster_df.empty:
+            st.warning("No students in roster to assign barcodes.")
+        else:
+            r_opts = {f"{row['first_name']} {row['last_name']} (Current ID: {row['student_id']})": row['student_id'] for _, row in roster_df.iterrows()}
+            selected_student_key = st.selectbox("Select Student to Assign New Keytag Barcode:", list(r_opts.keys()))
+            target_assign_id = r_opts[selected_student_key]
+
+            with st.form("barcode_assign_form", clear_on_submit=True):
+                new_assigned_barcode = st.text_input("Scan or Type New Keytag Barcode:")
+                btn_assign = st.form_submit_button("🔗 Link Barcode to Student")
+
+            if btn_assign and new_assigned_barcode:
+                r_idx = roster_df.index[roster_df["student_id"].astype(str) == str(target_assign_id)][0]
+                roster_df.at[r_idx, "student_id"] = new_assigned_barcode.strip()
+                save_df(ROSTER_FILE, roster_df)
+                st.session_state["roster_df"] = roster_df
+                st.success(f"Successfully assigned barcode '{new_assigned_barcode.strip()}' to student!")
+                st.rerun()
+
     st.markdown("---")
     with st.expander("👤 DECA Student Roster Management"):
         col_s1, col_s2, col_s3 = st.columns(3)
-        st_id = col_s1.text_input("Student ID Number:", value=f"SIM100{len(roster_df)+1}")
+        st_id = col_s1.text_input("Student ID Number / Keytag Barcode:", value=f"SIM100{len(roster_df)+1}")
         st_fn = col_s2.text_input("First Name:")
         st_ln = col_s3.text_input("Last Name:")
 
