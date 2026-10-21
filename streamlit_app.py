@@ -10,17 +10,16 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- FILE STORAGE & PATHS ---
+# --- FILE STORAGE & CONFIGURATION ---
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROSTER_FILE = os.path.join(ROOT_DIR, "roster.csv")
 SHIFTS_FILE = os.path.join(ROOT_DIR, "shifts.csv")
 INVENTORY_FILE = os.path.join(ROOT_DIR, "inventory.csv")
 SALES_FILE = os.path.join(ROOT_DIR, "sales.csv")
 
-# Maximum reasonable shift duration in hours before requiring advisor manual approval
 MAX_SHIFT_HOURS = 4.0
 
-# Custom CSS styling for dark theme and UI elements
+# --- STYLING ---
 st.markdown(
     """
     <style>
@@ -96,11 +95,10 @@ st.markdown(
 )
 
 
-# --- DATA HELPERS & INITIALIZATION ---
+# --- DATA HELPERS ---
 def normalize_dataframe(df: pd.DataFrame, numeric_columns=None, text_columns=None) -> pd.DataFrame:
-    """Normalize types to prevent pandas casting issues when updating data tables."""
     if df is None:
-        return df
+        return pd.DataFrame()
     numeric_columns = numeric_columns or []
     text_columns = text_columns or []
 
@@ -131,7 +129,7 @@ def save_df(file_path: str, df: pd.DataFrame) -> None:
     df.to_csv(file_path, index=False)
 
 
-# Default dataset definitions
+# Default datasets[cite: 1]
 def get_default_roster() -> pd.DataFrame:
     return pd.DataFrame([
         {"student_id": "SIM1001", "first_name": "Caroline", "last_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req_hours": 20},
@@ -164,13 +162,17 @@ def get_default_sales() -> pd.DataFrame:
 
 
 def reload_all_data():
-    st.session_state["roster_df"] = normalize_dataframe(load_or_create_df(ROSTER_FILE, get_default_roster()), numeric_columns=["req_hours"])
+    st.session_state["roster_df"] = normalize_dataframe(
+        load_or_create_df(ROSTER_FILE, get_default_roster()), numeric_columns=["req_hours"]
+    )
     st.session_state["shifts_df"] = normalize_dataframe(
         load_or_create_df(SHIFTS_FILE, get_default_shifts()),
         numeric_columns=["hours_logged"],
         text_columns=["student_id", "name", "check_in", "check_out", "shift_type", "status", "flagged"],
     )
-    st.session_state["inventory_df"] = normalize_dataframe(load_or_create_df(INVENTORY_FILE, get_default_inventory()), numeric_columns=["stock", "unit_price"])
+    st.session_state["inventory_df"] = normalize_dataframe(
+        load_or_create_df(INVENTORY_FILE, get_default_inventory()), numeric_columns=["stock", "unit_price"]
+    )
     st.session_state["sales_df"] = normalize_dataframe(
         load_or_create_df(SALES_FILE, get_default_sales()),
         numeric_columns=["quantity", "total_price"],
@@ -178,7 +180,7 @@ def reload_all_data():
     )
 
 
-# Store data in Session State for smooth UI interaction
+# Load session state
 if "roster_df" not in st.session_state:
     reload_all_data()
 
@@ -193,39 +195,33 @@ def student_lookup(student_id: str) -> pd.Series | None:
     return None if match.empty else match.iloc[0]
 
 
-# --- APP HEADER & SIDEBAR ---
+# --- SIDEBAR & HEADER ---
 st.title("Trojan Market")
 st.caption("Simsbury High School DECA • Operations & Hours Dashboard")
 
 with st.sidebar:
     st.markdown("### Store Controls")
-    st.info("System for student ID clock-ins, instant POS checkout, and live course progress tracking.")
+    st.info("Central management system for student time tracking, POS, and DECA course progress[cite: 1].")
 
     if st.button("🔄 Refresh Data"):
         reload_all_data()
         st.rerun()
 
     st.markdown("---")
-    st.markdown("### Low Stock Alert Threshold")
-    low_stock_limit = st.slider("Highlight items with stock under:", min_value=1, max_value=20, value=5)
-
-    st.markdown("---")
-    st.caption("• Hardware barcode scanner ready")
-    st.caption("• Shift capping active (Max 4 hrs per clock-in)")
-    st.caption("• Live inventory auto-deduction")
+    low_stock_limit = st.slider("Low stock warning threshold:", min_value=1, max_value=20, value=5)
 
 
-# Header Metrics
+# Metric Bar
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Enrolled Students", len(roster_df))
 m2.metric("Active Shifts", int((shifts_df["status"] == "ACTIVE").sum()))
 low_stock_count = int((inventory_df["stock"] <= low_stock_limit).sum())
-m3.metric("Items in Stock", int(inventory_df["stock"].sum()), delta=f"{low_stock_count} low" if low_stock_count else "Stock OK", delta_color="inverse" if low_stock_count else "normal")
-m4.metric("Sales Logged", len(sales_df))
+m3.metric("Total Items Stocked", int(inventory_df["stock"].sum()), delta=f"{low_stock_count} low" if low_stock_count else "Stock OK", delta_color="inverse" if low_stock_count else "normal")
+m4.metric("Sales Recorded", len(sales_df))
 
 st.write("")
 
-# --- MAIN TABS ---
+# --- TABS ---
 tabs = st.tabs([
     "🛡️ ID & Time Clock",
     "💸 POS & Inventory",
@@ -233,10 +229,12 @@ tabs = st.tabs([
     "📊 Sheet Manager",
 ])
 
-# TAB 1: TIME CLOCK (WITH AUTO-CLEARING BARCODE SCANNER)
+# ----------------------------------------------------
+# TAB 1: ID & TIME CLOCK
+# ----------------------------------------------------
 with tabs[0]:
     st.header("Student ID Scanner & Shift Clock")
-    st.caption("Scan student ID card or type manually. Hardware scanners automatically trigger check-in.")
+    st.caption("Scan student ID card barcode or manually type student ID.")
 
     col_scan, col_info = st.columns([1, 1])
 
@@ -247,12 +245,12 @@ with tabs[0]:
                 "Select Shift Type:",
                 ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"],
             )
-            submit_scan = st.form_submit_button("Process Scan")
+            submit_scan = st.form_submit_button("Process Card Scan")
 
         if submit_scan and scanned_barcode:
             student = student_lookup(scanned_barcode)
             if student is None:
-                st.error(f"Student ID '{scanned_barcode}' not found in roster.")
+                st.error(f"Student ID '{scanned_barcode}' not found in roster database.")
             else:
                 student_name = f"{student['first_name']} {student['last_name']}"
                 active_shifts = shifts_df[(shifts_df["student_id"] == student["student_id"]) & (shifts_df["status"] == "ACTIVE")]
@@ -287,7 +285,7 @@ with tabs[0]:
                     if raw_hours > MAX_SHIFT_HOURS:
                         duration_hours = MAX_SHIFT_HOURS
                         flagged = "YES (Exceeded Max Hours)"
-                        st.warning(f"Shift exceeded maximum threshold ({MAX_SHIFT_HOURS}h). Capped and flagged for advisor review.")
+                        st.warning(f"Shift exceeded limit ({MAX_SHIFT_HOURS}h). Duration capped and flagged for review.")
                     else:
                         duration_hours = max(round(raw_hours, 2), 0.25)
 
@@ -314,26 +312,26 @@ with tabs[0]:
                 hide_index=True,
             )
 
-
+# ----------------------------------------------------
 # TAB 2: POS & INVENTORY
+# ----------------------------------------------------
 with tabs[1]:
     st.header("Point of Sale & Live Inventory")
-    st.caption("Process store purchases with real-time stock deduction[cite: 1].")
+    st.caption("Record purchases and automatically adjust store inventory levels[cite: 1].")
 
     pos_col, inv_col = st.columns([1, 1.2])
 
     with pos_col:
         st.subheader("Checkout Register")
         
-        # Format inventory options with current stock levels
-        inventory_options = {
-            f"{row['item_name']} (${row['unit_price']:.2f}) - Stock: {int(row['stock'])}": row['item_id']
-            for _, row in inventory_df.iterrows()
-        }
-        
-        if not inventory_options:
+        if inventory_df.empty:
             st.warning("No inventory items found.")
         else:
+            inventory_options = {
+                f"{row['item_name']} (${float(row['unit_price']):.2f}) - Stock: {int(row['stock'])}": row['item_id']
+                for _, row in inventory_df.iterrows()
+            }
+            
             selected_label = st.selectbox("Select Purchased Item:", list(inventory_options.keys()))
             selected_item_id = inventory_options[selected_label]
             item_row = inventory_df[inventory_df["item_id"] == selected_item_id].iloc[0]
@@ -341,7 +339,7 @@ with tabs[1]:
             available_stock = int(item_row["stock"])
             
             if available_stock == 0:
-                st.error("⚠️ Item is currently OUT OF STOCK.")
+                st.error("⚠️ Item is OUT OF STOCK.")
                 quantity_sold = 0
             else:
                 quantity_sold = st.number_input(
@@ -354,9 +352,9 @@ with tabs[1]:
             payment_method = st.selectbox("Payment Method:", ["Cash Box", "Tap-to-Pay (RevTrak Ready)", "School Account"])
             total_cost = quantity_sold * float(item_row["unit_price"])
             
-            st.markdown(f"### Total Amount: **${total_cost:.2f}**")
+            st.markdown(f"### Total Price: **${total_cost:.2f}**")
 
-            if st.button("🛒 Complete Transaction", disabled=(available_stock == 0)):
+            if st.button("🛒 Complete Sale", disabled=(available_stock == 0)):
                 idx = inventory_df.index[inventory_df["item_id"] == selected_item_id][0]
                 inventory_df.at[idx, "stock"] = available_stock - quantity_sold
                 save_df(INVENTORY_FILE, inventory_df)
@@ -375,37 +373,44 @@ with tabs[1]:
                 save_df(SALES_FILE, sales_df)
                 st.session_state["sales_df"] = sales_df
 
-                st.success(f"Sale completed! Deducted {quantity_sold} x '{item_row['item_name']}'.")
+                st.success(f"Transaction recorded! Deducted {quantity_sold} x '{item_row['item_name']}'.")
                 st.rerun()
 
     with inv_col:
-        st.subheader("Live Inventory Status")
+        st.subheader("Live Inventory Levels")
 
-        # Color-code inventory table visually
         def highlight_low_stock(val):
-            if val == 0:
-                return "background-color: #7f1d1d; color: white;"
-            elif val <= low_stock_limit:
-                return "background-color: #78350f; color: white;"
+            try:
+                val_num = float(val)
+                if val_num == 0:
+                    return "background-color: #7f1d1d; color: white;"
+                elif val_num <= low_stock_limit:
+                    return "background-color: #78350f; color: white;"
+            except Exception:
+                pass
             return ""
 
-        styled_inventory = inventory_df[["item_id", "item_name", "category", "stock", "unit_price"]].style.applymap(
-            highlight_low_stock, subset=["stock"]
-        )
+        # Backward/Forward compatible Pandas Styler (.map vs .applymap)
+        styler = inventory_df[["item_id", "item_name", "category", "stock", "unit_price"]].style
+        if hasattr(styler, "map"):
+            styled_inventory = styler.map(highlight_low_stock, subset=["stock"])
+        else:
+            styled_inventory = styler.applymap(highlight_low_stock, subset=["subset" if "subset" in dir() else "stock"])
 
         st.dataframe(styled_inventory, use_container_width=True, hide_index=True)
 
-
+# ----------------------------------------------------
 # TAB 3: ADVISOR DASHBOARD
+# ----------------------------------------------------
 with tabs[2]:
     st.header("DECA Advisor & Student Progress Dashboard")
-    st.caption("Tracks required shift hours, flags long shifts, and displays progress[cite: 1].")
+    st.caption("Tracks required shift hours and monitors student progress[cite: 1].")
 
     completed_shifts = shifts_df[shifts_df["status"] == "COMPLETED"].copy()
     if not completed_shifts.empty:
         completed_shifts["hours_logged"] = pd.to_numeric(completed_shifts["hours_logged"], errors="coerce").fillna(0)
         hours_by_student = completed_shifts.groupby("student_id")["hours_logged"].sum().reset_index()
-        summary_df = roster_df.merge(hours_by_student, on="student_id", how="left").fillna({"hours_logged": 0})
+        summary_df = roster_df.merge(hours_by_student, on="student_id", how="left").fillna({"hours_logged": 0.0})
         summary_df["progress_%"] = ((summary_df["hours_logged"] / summary_df["req_hours"]) * 100).round(1)
     else:
         summary_df = roster_df.copy()
@@ -414,30 +419,30 @@ with tabs[2]:
 
     a1, a2, a3 = st.columns(3)
     a1.metric("Enrolled Students", len(summary_df))
-    a2.metric("Total Completed Hours", f"{summary_df['hours_logged'].sum():.1f} hrs")
-    a3.metric("Average Course Progress", f"{summary_df['progress_%'].mean():.1f}%")
+    a2.metric("Total Hours Completed", f"{summary_df['hours_logged'].sum():.1f} hrs")
+    a3.metric("Average Course Completion", f"{summary_df['progress_%'].mean():.1f}%")
 
-    st.subheader("Student Progress Roster")
+    st.subheader("Student Hours Progress Roster")
     for idx, row in summary_df.iterrows():
         c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1, 2])
         c_name.markdown(f"**{row['first_name']} {row['last_name']}** (`{row['student_id']}`)")
         c_course.caption(f"{row['course']} • {row['track']}")
         c_hours.markdown(f"**{row['hours_logged']:.1f}** / {row['req_hours']} hrs")
-        pct = min(float(row["progress_%"]) / 100.0, 1.0)
+        pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0)
         c_bar.progress(pct, text=f"{row['progress_%']}%")
 
-    # Flagged shifts section
     flagged_shifts = shifts_df[shifts_df["flagged"].str.startswith("YES", na=False)]
     if not flagged_shifts.empty:
         st.markdown("---")
         st.subheader("⚠️ Shifts Flagged for Review")
-        st.dataframe(flagged_shifts[["student_id", "name", "check_in", "check_out", "hours_logged", "flagged"]], use_container_width=True)
+        st.dataframe(flagged_shifts[["student_id", "name", "check_in", "check_out", "hours_logged", "flagged"]], use_container_width=True, hide_index=True)
 
-
+# ----------------------------------------------------
 # TAB 4: SHEET MANAGER
+# ----------------------------------------------------
 with tabs[3]:
     st.header("Custom Database Manager")
-    st.caption("Directly inspect and update data spreadsheets[cite: 1].")
+    st.caption("Directly inspect and update store CSV data files[cite: 1].")
 
     sheet_option = st.radio(
         "Select Sheet to Edit:",
