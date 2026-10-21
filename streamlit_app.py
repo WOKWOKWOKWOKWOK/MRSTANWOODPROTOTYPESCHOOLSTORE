@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="Trojan Market - Store Management System",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="collapsed",  # Hide sidebar by default
+    initial_sidebar_state="collapsed",
 )
 
 # --- FILE STORAGE & CONFIGURATION ---
@@ -21,31 +21,44 @@ SALES_FILE = os.path.join(ROOT_DIR, "sales.csv")
 
 MAX_SHIFT_HOURS = 4.0
 
-# --- STYLING (Sidebar hidden completely via CSS) ---
+# --- STYLING (FORCE-HIDE SIDEBAR ON DESKTOP & MOBILE) ---
 st.markdown(
     """
     <style>
-    /* Hide Streamlit Sidebar UI components completely */
-    [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {
+    /* Completely hide sidebar drawer, nav, and collapse controls */
+    [data-testid="stSidebar"],
+    [data-testid="stSidebarNav"],
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"],
+    section[data-testid="stSidebar"],
+    button[aria-label="Toggle sidebar"] {
         display: none !important;
+        visibility: hidden !important;
+        width: 0 !important;
+        height: 0 !important;
     }
-    
+
     html, body, [data-testid="stAppViewContainer"] {
         background-color: #0b1120 !important;
         color: #e5e7eb !important;
     }
+    
     .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2rem;
-        background: #0b1120;
+        padding-top: 1.5rem !important;
+        padding-bottom: 2rem !important;
+        background: #0b1120 !important;
+        max-width: 100% !important;
     }
+    
     h1, h2, h3, h4, h5, h6, p, div, span, label, li, button {
         color: #e5e7eb !important;
     }
+    
     .stTabs [role="tablist"] {
         gap: 0.5rem;
         background: transparent;
     }
+    
     .stTabs [role="tab"] {
         border-radius: 10px 10px 0 0;
         background: #1f2937;
@@ -53,11 +66,13 @@ st.markdown(
         color: #dbeafe;
         padding: 0.5rem 1rem;
     }
+    
     .stTabs [role="tab"][aria-selected="true"] {
         background: #2563eb;
         color: white;
         border-color: #3b82f6;
     }
+    
     .stTextInput > div > div, .stSelectbox > div > div, .stNumberInput > div > div,
     .stRadio > div, .stDataFrame, .stDataEditor, .stMarkdownContainer, .stAlert,
     .stButton > button, .stDownloadButton > button {
@@ -65,6 +80,7 @@ st.markdown(
         border: 1px solid rgba(148, 163, 184, 0.28);
         color: #e5e7eb;
     }
+    
     .stButton > button {
         background: #1d4ed8;
         color: white;
@@ -72,22 +88,27 @@ st.markdown(
         border-radius: 0.5rem;
         font-weight: 600;
     }
+    
     .stButton > button:hover {
         background: #2563eb;
         color: white;
     }
+    
     [data-testid="stMetricValue"] {
         color: #f8fafc !important;
     }
+    
     [data-testid="stMetricLabel"] {
         color: #cbd5e1 !important;
     }
+    
     [data-testid="stMetricContainer"] {
         background: rgba(17, 24, 39, 0.9);
         border: 1px solid rgba(148, 163, 184, 0.2);
         border-radius: 0.75rem;
         padding: 0.75rem;
     }
+    
     .stInfo, .stSuccess, .stWarning, .stError {
         background: rgba(30, 41, 59, 0.9);
         border: 1px solid rgba(148, 163, 184, 0.2);
@@ -295,7 +316,7 @@ def student_lookup(student_id: str) -> pd.Series | None:
 st.title("Trojan Market")
 st.caption("Simsbury High School DECA • Operations & Hours Dashboard")
 
-# Top System Controls Expander (Replaces Sidebar)
+# System Controls Expander
 with st.expander("⚙️ Store Controls & System Settings"):
     ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.5, 1, 1])
     with ctrl_col1:
