@@ -1,5 +1,6 @@
 import os
 import datetime
+import requests
 import pandas as pd
 import streamlit as st
 
@@ -134,7 +135,7 @@ def save_df(file_path: str, df: pd.DataFrame) -> None:
     df.to_csv(file_path, index=False)
 
 
-# Default datasets
+# Default Datasets
 def get_default_roster() -> pd.DataFrame:
     return pd.DataFrame([
         {"student_id": "SIM1001", "first_name": "Caroline", "last_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req_hours": 20},
@@ -154,11 +155,11 @@ def get_default_shifts() -> pd.DataFrame:
 
 def get_default_inventory() -> pd.DataFrame:
     return pd.DataFrame([
-        {"item_id": "SKU-001", "item_name": "Fresh Baked Cookies", "category": "Food", "stock": 48, "unit_price": 1.50},
-        {"item_id": "SKU-002", "item_name": "Fresh Popcorn Bag", "category": "Food", "stock": 30, "unit_price": 2.00},
-        {"item_id": "SKU-003", "item_name": "Slushy (Full Size)", "category": "Beverage", "stock": 25, "unit_price": 2.50},
-        {"item_id": "SKU-004", "item_name": "SHS Trojan Hoodie", "category": "Apparel", "stock": 15, "unit_price": 35.00},
-        {"item_id": "SKU-005", "item_name": "Trojan Spirit T-Shirt", "category": "Apparel", "stock": 22, "unit_price": 18.00},
+        {"item_id": "SKU-001", "revtrak_sku": "RT-COOK-01", "item_name": "Fresh Baked Cookies", "category": "Food", "stock": 48, "unit_price": 1.50},
+        {"item_id": "SKU-002", "revtrak_sku": "RT-POPC-01", "item_name": "Fresh Popcorn Bag", "category": "Food", "stock": 30, "unit_price": 2.00},
+        {"item_id": "SKU-003", "revtrak_sku": "RT-SLUS-01", "item_name": "Slushy (Full Size)", "category": "Beverage", "stock": 25, "unit_price": 2.50},
+        {"item_id": "SKU-004", "revtrak_sku": "RT-HOOD-01", "item_name": "SHS Trojan Hoodie", "category": "Apparel", "stock": 15, "unit_price": 35.00},
+        {"item_id": "SKU-005", "revtrak_sku": "RT-TSHI-01", "item_name": "Trojan Spirit T-Shirt", "category": "Apparel", "stock": 22, "unit_price": 18.00},
     ])
 
 
@@ -181,8 +182,12 @@ def reload_all_data():
         text_columns=["student_id", "name", "check_in", "check_out", "shift_type", "status", "flagged"],
     )
     
+    inv_raw = load_or_create_df(INVENTORY_FILE, get_default_inventory())
+    if "revtrak_sku" not in inv_raw.columns:
+        inv_raw["revtrak_sku"] = "RT-NONE"
+        
     st.session_state["inventory_df"] = normalize_dataframe(
-        load_or_create_df(INVENTORY_FILE, get_default_inventory()), numeric_columns=["stock", "unit_price"]
+        inv_raw, numeric_columns=["stock", "unit_price"]
     )
     st.session_state["sales_df"] = normalize_dataframe(
         load_or_create_df(SALES_FILE, get_default_sales()),
@@ -206,6 +211,76 @@ def student_lookup(student_id: str) -> pd.Series | None:
     return None if match.empty else match.iloc[0]
 
 
+# --- REVTRAK API SYNC ENGINE ---
+def sync_revtrak_orders():
+    """Fetches recent online orders from RevTrak API and deducts stock."""
+    if "revtrak" not in st.secrets:
+        st.error("RevTrak secrets not configured. Please set up `.streamlit/secrets.toml` with `api_key` and `api_url`.")
+        return
+
+    api_url = st.secrets["revtrak"].get("api_url", "")
+    api_key = st.secrets["revtrak"].get("api_key", "")
+
+    if not api_url or not api_key:
+        st.error("Missing RevTrak API credentials in secrets configuration.")
+        return
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.get(f"{api_url}/orders/recent", headers=headers, timeout=5)
+        if response.status_code != 200:
+            st.error(f"RevTrak API call failed (HTTP {response.status_code}): {response.text}")
+            return
+
+        orders = response.json().get("orders", [])
+        inv_df = st.session_state["inventory_df"]
+        sls_df = st.session_state["sales_df"]
+        updated = False
+
+        for order in orders:
+            order_id = order.get("order_id")
+            if not sls_df.empty and order_id in sls_df["transaction_id"].values:
+                continue
+
+            for item in order.get("items", []):
+                rt_sku = item.get("sku")
+                qty = int(item.get("quantity", 1))
+
+                match = inv_df[inv_df["revtrak_sku"] == rt_sku]
+                if not match.empty:
+                    idx = match.index[0]
+                    current_stock = int(inv_df.at[idx, "stock"])
+                    inv_df.at[idx, "stock"] = max(0, current_stock - qty)
+
+                    new_sale = {
+                        "transaction_id": order_id,
+                        "timestamp": order.get("created_at", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                        "item_id": inv_df.at[idx, "item_id"],
+                        "quantity": qty,
+                        "total_price": float(item.get("price", 0.0)) * qty,
+                        "payment_method": "RevTrak Online",
+                    }
+                    sls_df = pd.concat([sls_df, pd.DataFrame([new_sale])], ignore_index=True)
+                    updated = True
+
+        if updated:
+            save_df(INVENTORY_FILE, inv_df)
+            save_df(SALES_FILE, sls_df)
+            st.session_state["inventory_df"] = inv_df
+            st.session_state["sales_df"] = sls_df
+            st.success("Synchronized online RevTrak sales with store inventory!")
+            st.rerun()
+        else:
+            st.info("Inventory is already up to date with RevTrak.")
+
+    except Exception as e:
+        st.error(f"RevTrak sync error: {e}")
+
+
 # --- SIDEBAR & HEADER ---
 st.title("Trojan Market")
 st.caption("Simsbury High School DECA • Operations & Hours Dashboard")
@@ -214,9 +289,14 @@ with st.sidebar:
     st.markdown("### Store Controls")
     st.info("Central management system for student time tracking, POS, and DECA course progress.")
 
-    if st.button("🔄 Refresh Data"):
+    if st.button("🔄 Refresh Local Data"):
         reload_all_data()
         st.rerun()
+
+    st.markdown("---")
+    st.markdown("### RevTrak Integration")
+    if st.button("🌐 Sync RevTrak Sales"):
+        sync_revtrak_orders()
 
     st.markdown("---")
     low_stock_limit = st.slider("Low stock warning threshold:", min_value=1, max_value=20, value=5)
@@ -323,7 +403,6 @@ with tabs[0]:
                 hide_index=True,
             )
 
-    # DIRECT EDIT TOOL: Manual Shift Override
     st.markdown("---")
     with st.expander("🛠️ Advisor Tool: Add / Override Manual Shift Entry"):
         if roster_df.empty:
@@ -396,7 +475,7 @@ with tabs[1]:
                     value=1
                 )
 
-            payment_method = st.selectbox("Payment Method:", ["Cash Box", "Tap-to-Pay (RevTrak Ready)", "School Account"])
+            payment_method = st.selectbox("Payment Method:", ["Cash Box", "Tap-to-Pay (RevTrak)", "School Account"])
             total_cost = quantity_sold * float(item_row["unit_price"])
             
             st.markdown(f"### Total Price: **${total_cost:.2f}**")
@@ -437,7 +516,7 @@ with tabs[1]:
                 pass
             return ""
 
-        styler = inventory_df[["item_id", "item_name", "category", "stock", "unit_price"]].style
+        styler = inventory_df[["item_id", "revtrak_sku", "item_name", "category", "stock", "unit_price"]].style
         if hasattr(styler, "map"):
             styled_inventory = styler.map(highlight_low_stock, subset=["stock"])
         else:
@@ -445,19 +524,19 @@ with tabs[1]:
 
         st.dataframe(styled_inventory, use_container_width=True, hide_index=True)
 
-    # DIRECT EDIT TOOL: Inventory Management & Restock
     st.markdown("---")
     st.subheader("Inventory Editing Tools")
     
     t_add, t_restock = st.tabs(["📦 Add New Product", "🔄 Restock Existing Item"])
     
     with t_add:
-        c1, c2, c3, c4, c5 = st.columns([1.2, 2, 1.5, 1, 1])
+        c1, c2, c3, c4, c5, c6 = st.columns([1, 1, 1.8, 1.2, 1, 1])
         new_sku = c1.text_input("SKU ID:", value=f"SKU-00{len(inventory_df)+1}")
-        new_name = c2.text_input("Item Name:")
-        new_cat = c3.selectbox("Category:", ["Food", "Beverage", "Apparel", "Merchandise", "Supplies"])
-        new_stock = c4.number_input("Initial Stock:", min_value=0, value=20)
-        new_price = c5.number_input("Price ($):", min_value=0.0, value=2.00, step=0.25)
+        new_rsku = c2.text_input("RevTrak SKU:", value=f"RT-ITEM-0{len(inventory_df)+1}")
+        new_name = c3.text_input("Item Name:")
+        new_cat = c4.selectbox("Category:", ["Food", "Beverage", "Apparel", "Merchandise", "Supplies"])
+        new_stock = c5.number_input("Initial Stock:", min_value=0, value=20)
+        new_price = c6.number_input("Price ($):", min_value=0.0, value=2.00, step=0.25)
 
         if st.button("➕ Add Item to Store Catalog"):
             if new_name.strip() == "":
@@ -465,6 +544,7 @@ with tabs[1]:
             else:
                 new_item = {
                     "item_id": new_sku,
+                    "revtrak_sku": new_rsku,
                     "item_name": new_name,
                     "category": new_cat,
                     "stock": new_stock,
@@ -529,7 +609,6 @@ with tabs[2]:
             st.subheader("⚠️ Shifts Flagged for Review")
             st.dataframe(flagged_shifts[["student_id", "name", "check_in", "check_out", "hours_logged", "flagged"]], use_container_width=True, hide_index=True)
 
-    # DIRECT EDIT TOOL: Add New Student / Update Requirements
     st.markdown("---")
     with st.expander("👤 DECA Student Roster Management"):
         col_s1, col_s2, col_s3 = st.columns(3)
@@ -597,7 +676,7 @@ with tabs[3]:
             save_df(INVENTORY_FILE, st.session_state["inventory_df"])
         else:
             st.session_state["sales_df"] = normalize_dataframe(edited_df, numeric_columns=["quantity", "total_price"])
-            save_df(SALES_FILE, st.session_state["sales_df"])
+            save_df(SALES_FILE, save_df(SALES_FILE, st.session_state["sales_df"]))
 
         st.success("Changes saved successfully to disk.")
         st.rerun()
