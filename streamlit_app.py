@@ -451,7 +451,7 @@ tabs = st.tabs([
 ])
 
 # ----------------------------------------------------
-# TAB 1: ID & TIME CLOCK (EXACT MINUTE & SECOND LOGGING)
+# TAB 1: ID & TIME CLOCK
 # ----------------------------------------------------
 with tabs[0]:
     st.header("Student Keytag Scanner & Shift Clock")
@@ -500,7 +500,7 @@ with tabs[0]:
                     st.success(f"✅ Clocked IN: {student_name} ({student['track']}) at {now.strftime('%H:%M:%S')}")
                     st.rerun()
                 else:
-                    # Clock OUT (Calculated to the exact second/minute)
+                    # Clock OUT (Calculated to exact minute)
                     idx = active_shifts.index[0]
                     checked_in = datetime.datetime.strptime(active_shifts.iloc[0]["check_in"], "%Y-%m-%d %H:%M:%S")
                     now = datetime.datetime.now()
@@ -738,7 +738,7 @@ with tabs[1]:
                 st.rerun()
 
 # ----------------------------------------------------
-# TAB 3: ADVISOR DASHBOARD (EXACT MINUTES DISPLAY)
+# TAB 3: ADVISOR DASHBOARD (ROSTER MANAGEMENT & REMOVAL)
 # ----------------------------------------------------
 with tabs[2]:
     st.header("DECA Advisor & Student Progress Dashboard")
@@ -831,7 +831,7 @@ with tabs[2]:
                 st.rerun()
 
     st.markdown("---")
-    with st.expander("👤 DECA Student Roster Management (Add New Student)"):
+    with st.expander("👤 Register New Student to Roster"):
         col_s1, col_s2, col_s3, col_s4 = st.columns(4)
         st_id = col_s1.text_input("Student ID#:", value=f"SIM100{len(roster_df)+1}")
         st_bc = col_s2.text_input("Scan/Type Keytag Barcode:", value=f"BC-100{len(roster_df)+1}")
@@ -862,6 +862,23 @@ with tabs[2]:
                 save_df(ROSTER_FILE, roster_df)
                 st.session_state["roster_df"] = roster_df
                 st.success(f"Registered {st_fn} {st_ln} ({st_id})!")
+                st.rerun()
+
+    st.markdown("---")
+    with st.expander("🗑️ Remove / Unenroll Student from Roster"):
+        if roster_df.empty:
+            st.warning("No students in roster to remove.")
+        else:
+            rem_opts = {f"{row['first_name']} {row['last_name']} (ID: {row['student_id']})": str(row['student_id']) for _, row in roster_df.iterrows()}
+            student_to_rem_key = st.selectbox("Select Student to Remove:", list(rem_opts.keys()), key="rem_student_select")
+            rem_sid = rem_opts[student_to_rem_key]
+            rem_st = student_lookup_by_code(rem_sid)
+
+            if st.button("❌ Permanently Delete Student Profile"):
+                roster_df = roster_df[roster_df["student_id"].astype(str) != str(rem_sid)]
+                save_df(ROSTER_FILE, roster_df)
+                st.session_state["roster_df"] = roster_df
+                st.success(f"Removed {rem_st['first_name']} {rem_st['last_name']} ({rem_sid}) from roster.")
                 st.rerun()
 
 # ----------------------------------------------------
