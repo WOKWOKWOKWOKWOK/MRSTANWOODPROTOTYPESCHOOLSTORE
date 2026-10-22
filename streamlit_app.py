@@ -5,6 +5,19 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+# Hide Streamlit top toolbar, header, and footer/manage app overlay
+hide_streamlit_elements = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    div[data-testid="stToolbar"] {display: none !important;}
+    div[data-testid="stDecoration"] {display: none !important;}
+    div[data-testid="stStatusWidget"] {visibility: hidden !important;}
+    </style>
+"""
+st.markdown(hide_streamlit_elements, unsafe_allow_html=True)
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Trojan Market - Store Management System",
