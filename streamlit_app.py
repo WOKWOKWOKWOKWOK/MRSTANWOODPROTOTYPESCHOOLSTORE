@@ -5,19 +5,6 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-# Hide Streamlit top toolbar, header, and footer/manage app overlay
-hide_streamlit_elements = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
-    div[data-testid="stToolbar"] {display: none !important;}
-    div[data-testid="stDecoration"] {display: none !important;}
-    div[data-testid="stStatusWidget"] {visibility: hidden !important;}
-    </style>
-"""
-st.markdown(hide_streamlit_elements, unsafe_allow_html=True)
-
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Trojan Market - Store Management System",
@@ -142,7 +129,7 @@ st.markdown(
 )
 
 
-# --- TIME FORMATTING HELPER ---
+# --- TIME & SHIFT HELPERS ---
 def format_hours_mins(hours_val: float) -> str:
     """Formats decimal hours into clean hours and minutes (e.g. '2 mins' or '1 hr 15 mins')."""
     total_minutes = int(round(float(hours_val) * 60))
@@ -155,6 +142,17 @@ def format_hours_mins(hours_val: float) -> str:
         return f"{h} hr{'s' if h > 1 else ''}"
     else:
         return f"{m} min{'s' if m != 1 else ''}"
+
+
+def get_auto_shift_type() -> str:
+    """Auto-detects default shift type based on current time of day."""
+    now_time = datetime.datetime.now().time()
+    if now_time < datetime.time(13, 0):
+        return "School Day Shift"
+    elif now_time < datetime.time(14, 10):
+        return "Prep Shift (Period 5-8)"
+    else:
+        return "After School Shift"
 
 
 # --- AUDIT LOGGING ENGINE ---
@@ -270,14 +268,14 @@ def save_df(file_path: str, df: pd.DataFrame) -> None:
 # Default Datasets
 def get_default_roster() -> pd.DataFrame:
     return pd.DataFrame([
-        {"student_id": "SIM1001", "barcode_id": "BC-1001", "first_name": "Caroline", "last_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req_hours": 20, "photo_url": ""},
-        {"student_id": "SIM1002", "barcode_id": "BC-1002", "first_name": "Elizabeth", "last_name": "Cadoff", "course": "6-Marketing", "track": "VP-School Store", "req_hours": 20, "photo_url": ""},
-        {"student_id": "SIM1003", "barcode_id": "BC-1003", "first_name": "Radha", "last_name": "Bansal", "course": "1-Entrepreneurship", "track": "VP-Marketing", "req_hours": 20, "photo_url": ""},
-        {"student_id": "SIM1004", "barcode_id": "BC-1004", "first_name": "Liam", "last_name": "Ricciardelli", "course": "2-Marketing", "track": "Officer", "req_hours": 10, "photo_url": ""},
-        {"student_id": "SIM1005", "barcode_id": "BC-1005", "first_name": "Julian", "last_name": "Mass", "course": "2-Marketing", "track": "Honors: Store", "req_hours": 10, "photo_url": ""},
-        {"student_id": "SIM1006", "barcode_id": "BC-1006", "first_name": "Henry", "last_name": "Pfeiffer", "course": "6-Marketing", "track": "ICDC", "req_hours": 10, "photo_url": ""},
-        {"student_id": "SIM1007", "barcode_id": "BC-1007", "first_name": "Caleb", "last_name": "Deems", "course": "7-SEM", "track": "Honors: Store", "req_hours": 10, "photo_url": ""},
-        {"student_id": "SIM1008", "barcode_id": "BC-1008", "first_name": "Olivia", "last_name": "Campasano", "course": "Accounting 2", "track": "Store", "req_hours": 10, "photo_url": ""},
+        {"student_id": "SIM1001", "barcode_id": "SIM1001", "first_name": "Caroline", "last_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req_hours": 20, "photo_url": ""},
+        {"student_id": "SIM1002", "barcode_id": "SIM1002", "first_name": "Elizabeth", "last_name": "Cadoff", "course": "6-Marketing", "track": "VP-School Store", "req_hours": 20, "photo_url": ""},
+        {"student_id": "SIM1003", "barcode_id": "SIM1003", "first_name": "Radha", "last_name": "Bansal", "course": "1-Entrepreneurship", "track": "VP-Marketing", "req_hours": 20, "photo_url": ""},
+        {"student_id": "SIM1004", "barcode_id": "SIM1004", "first_name": "Liam", "last_name": "Ricciardelli", "course": "2-Marketing", "track": "Officer", "req_hours": 10, "photo_url": ""},
+        {"student_id": "SIM1005", "barcode_id": "SIM1005", "first_name": "Julian", "last_name": "Mass", "course": "2-Marketing", "track": "Honors: Store", "req_hours": 10, "photo_url": ""},
+        {"student_id": "SIM1006", "barcode_id": "SIM1006", "first_name": "Henry", "last_name": "Pfeiffer", "course": "6-Marketing", "track": "ICDC", "req_hours": 10, "photo_url": ""},
+        {"student_id": "SIM1007", "barcode_id": "SIM1007", "first_name": "Caleb", "last_name": "Deems", "course": "7-SEM", "track": "Honors: Store", "req_hours": 10, "photo_url": ""},
+        {"student_id": "SIM1008", "barcode_id": "SIM1008", "first_name": "Olivia", "last_name": "Campasano", "course": "Accounting 2", "track": "Store", "req_hours": 10, "photo_url": ""},
         {"student_id": "SIM1009", "barcode_id": "13753", "first_name": "Anay", "last_name": "Gupta", "course": "Accounting 2", "track": "Store", "req_hours": 10, "photo_url": ""},
     ])
 
@@ -454,13 +452,21 @@ sales_df = st.session_state["sales_df"]
 
 
 def student_lookup_by_code(query_val: str) -> pd.Series | None:
-    """Matches either Student ID or linked Barcode ID."""
+    """Matches either SHS Student ID or linked Keytag Barcode ID."""
     clean_val = str(query_val).strip().upper()
     match = roster_df[
         (roster_df["student_id"].astype(str).str.upper() == clean_val) | 
         (roster_df["barcode_id"].astype(str).str.upper() == clean_val)
     ]
     return None if match.empty else match.iloc[0]
+
+
+def get_logged_hours(student_id: str) -> float:
+    """Calculates total completed hours logged for a specific student."""
+    c_shifts = shifts_df[(shifts_df["student_id"].astype(str) == str(student_id)) & (shifts_df["status"] == "COMPLETED")]
+    if c_shifts.empty:
+        return 0.0
+    return pd.to_numeric(c_shifts["hours_logged"], errors="coerce").sum()
 
 
 # ----------------------------------------------------
@@ -553,25 +559,36 @@ st.write("")
 # SHARED VIEW: ID & TIME CLOCK FUNCTION
 # ----------------------------------------------------
 def render_time_clock_view():
-    st.header("Student Keytag Scanner & Shift Clock")
-    st.caption("Scan keytag barcode using the terminal USB scanner or manually enter ID.")
+    st.header("Student Keytag / SHS ID Scanner & Shift Clock")
+    st.caption("Scan hardware barcode keytag or SHS Student ID card (or type ID manually).")
 
     col_scan, col_info = st.columns([1.2, 1])
 
     with col_scan:
+        auto_shift = get_auto_shift_type()
+        shift_options = ["School Day Shift", "Prep Shift (Period 5-8)", "After School Shift", "Open House / Event"]
+        auto_index = shift_options.index(auto_shift) if auto_shift in shift_options else 0
+
         with st.form(key="scanner_form", clear_on_submit=True):
-            scanned_barcode = st.text_input("⚡ Barcode Terminal Feed (Scan Keytag Here):", key="barcode_field")
+            # SHIFT TYPE SELECTION AT THE TOP (WITH AUTOMATIC DEFAULT BY TIME)
             shift_type = st.selectbox(
-                "Select Shift Type:",
-                ["Prep Shift (Period 5-8)", "School Day Shift", "After School Shift", "Open House / Event"],
+                "1. Shift Type (Auto-selected based on current time):",
+                shift_options,
+                index=auto_index,
+                help="Automatically switches based on the clock. You can override if needed."
             )
-            submit_scan = st.form_submit_button("Process Scan")
+            scanned_barcode = st.text_input(
+                "2. ⚡ Scan Barcode Here (SHS ID or Trojan Pass Keytag):", 
+                key="barcode_field",
+                placeholder="Click here & trigger USB scanner..."
+            )
+            submit_scan = st.form_submit_button("Process Shift Scan")
 
         if submit_scan and scanned_barcode:
             global shifts_df
             student = student_lookup_by_code(scanned_barcode)
             if student is None:
-                st.error(f"❌ Barcode/ID '{scanned_barcode}' is not registered in the database.")
+                st.error(f"❌ Barcode / ID '{scanned_barcode}' is not registered in the database.")
             else:
                 student_name = f"{student['first_name']} {student['last_name']}"
                 st.session_state["active_pass_sid"] = str(student["student_id"])
@@ -655,6 +672,11 @@ def render_time_clock_view():
         pass_sid = student_opts[selected_pass_label]
         pass_student = student_lookup_by_code(pass_sid)
 
+        # Hours Calculation & Countdown Tally
+        req_h = float(pass_student.get("req_hours", 10))
+        logged_h = get_logged_hours(str(pass_student["student_id"]))
+        rem_h = max(0.0, req_h - logged_h)
+
         k_col1, k_col2 = st.columns([1, 1.5])
         with k_col1:
             render_barcode_keycard(
@@ -666,11 +688,18 @@ def render_time_clock_view():
             )
         with k_col2:
             st.markdown(f"### Profile: **{pass_student['first_name']} {pass_student['last_name']}**")
-            st.write(f"• **Student ID#:** `{pass_student['student_id']}`")
+            st.write(f"• **SHS Student ID#:** `{pass_student['student_id']}`")
             st.write(f"• **Assigned Keytag Barcode:** `{pass_student['barcode_id']}`")
             st.write(f"• **Enrolled Course:** {pass_student['course']}")
             st.write(f"• **DECA Role / Track:** {pass_student['track']}")
-            st.write(f"• **Target Hours:** {pass_student['req_hours']} hrs")
+            
+            st.markdown("#### ⏳ Shift Hours & Countdown Tally")
+            st.write(f"• **Target Requirement:** {req_h} hrs")
+            st.write(f"• **Completed Time:** `{format_hours_mins(logged_h)}`")
+            if rem_h == 0:
+                st.success("🎉 **Requirement Completed!** (0 remaining hours)")
+            else:
+                st.warning(f"⏳ **Remaining Hours Needed:** `{format_hours_mins(rem_h)}` ({rem_h:.2f} hrs left)")
 
 
 # ----------------------------------------------------
@@ -828,18 +857,11 @@ else:
     # TAB 3: ADVISOR DASHBOARD
     with tabs[2]:
         st.header("DECA Advisor & Student Progress Dashboard")
-        st.caption("Tracks required shift hours, links keytag barcodes and photos to student profiles.")
+        st.caption("Tracks required shift hours, countdown tallies, links SHS ID / keytag barcodes to student profiles.")
 
-        completed_shifts = shifts_df[shifts_df["status"] == "COMPLETED"].copy() if "status" in shifts_df.columns else pd.DataFrame()
-        if not completed_shifts.empty:
-            completed_shifts["hours_logged"] = pd.to_numeric(completed_shifts["hours_logged"], errors="coerce").fillna(0)
-            hours_by_student = completed_shifts.groupby("student_id")["hours_logged"].sum().reset_index()
-            summary_df = roster_df.merge(hours_by_student, on="student_id", how="left").fillna({"hours_logged": 0.0})
-            summary_df["progress_%"] = ((summary_df["hours_logged"] / summary_df["req_hours"]) * 100).round(1)
-        else:
-            summary_df = roster_df.copy()
-            summary_df["hours_logged"] = 0.0
-            summary_df["progress_%"] = 0.0
+        summary_df = roster_df.copy()
+        summary_df["hours_logged"] = summary_df["student_id"].apply(lambda sid: get_logged_hours(str(sid)))
+        summary_df["progress_%"] = ((summary_df["hours_logged"] / summary_df["req_hours"]) * 100).round(1)
 
         a1, a2, a3 = st.columns(3)
         a1.metric("Enrolled Students", len(summary_df))
@@ -847,19 +869,25 @@ else:
         a2.metric("Total Time Completed", format_hours_mins(total_hours_sum))
         a3.metric("Average Course Completion", f"{summary_df['progress_%'].mean():.1f}%")
 
-        st.subheader("Student Hours Progress Roster")
+        st.subheader("Student Hours Progress & Countdown Tally Roster")
         for idx, row in summary_df.iterrows():
-            c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1.2, 1.8])
+            req_h = float(row['req_hours'])
+            log_h = float(row['hours_logged'])
+            rem_h = max(0.0, req_h - log_h)
+            
+            c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1.4, 1.6])
             c_name.markdown(f"**{row['first_name']} {row['last_name']}** (`ID: {row['student_id']}` | `BC: {row['barcode_id']}`)")
             c_course.caption(f"{row['course']} • {row['track']}")
-            logged_text = format_hours_mins(row['hours_logged'])
-            c_hours.markdown(f"**{logged_text}** / {row['req_hours']} hrs")
+            
+            rem_text = "Completed! 🎉" if rem_h == 0 else f"Rem: {format_hours_mins(rem_h)}"
+            c_hours.markdown(f"**{format_hours_mins(log_h)}** / {req_h} hrs  \n<span style='font-size: 12px; color: #93c5fd;'>{rem_text}</span>", unsafe_allow_html=True)
+            
             pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0)
             c_bar.progress(pct, text=f"{row['progress_%']}%")
 
         st.markdown("---")
-        st.subheader("⚡ Rapid Barcode Keytag Pairing Terminal")
-        st.caption("Click into the barcode field below and scan the physical keytag with your USB scanner.")
+        st.subheader("⚡ Rapid Barcode Keytag / SHS ID Pairing Terminal")
+        st.caption("Select a student profile, click into the input field, and zap either their SHS Student ID card or physical keytag.")
 
         if roster_df.empty:
             st.warning("No students in roster to link.")
@@ -872,11 +900,11 @@ else:
                 current_st = student_lookup_by_code(target_sid)
                 
                 scanned_pair_barcode = st.text_input(
-                    "2. Click Here & Zap Physical Keytag with USB Scanner:", 
+                    "2. Click Here & Zap Physical Keytag or SHS Student ID with USB Scanner:", 
                     value=str(current_st["barcode_id"]),
                     help="Pull the trigger on your hardware scanner. It will auto-fill this input box."
                 )
-                save_pair_btn = st.form_submit_button("🔗 Link Barcode to Student Profile")
+                save_pair_btn = st.form_submit_button("🔗 Link Barcode / SHS ID to Profile")
 
             if save_pair_btn:
                 r_idx = roster_df.index[roster_df["student_id"].astype(str) == str(target_sid)][0]
@@ -885,14 +913,14 @@ else:
                 st.session_state["roster_df"] = roster_df
                 
                 log_audit_event("LINK_BARCODE", f"Linked barcode '{scanned_pair_barcode.strip()}' to student {current_st['first_name']} {current_st['last_name']} ({target_sid})")
-                st.success(f"✅ Keytag Barcode '{scanned_pair_barcode.strip()}' successfully linked to {current_st['first_name']} {current_st['last_name']}!")
+                st.success(f"✅ Barcode / SHS ID '{scanned_pair_barcode.strip()}' successfully linked to {current_st['first_name']} {current_st['last_name']}!")
                 st.rerun()
 
         st.markdown("---")
         with st.expander("👤 Register New Student to Roster"):
             col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-            st_id = col_s1.text_input("Student ID#:", value=f"SIM100{len(roster_df)+1}")
-            st_bc = col_s2.text_input("Scan/Type Keytag Barcode:", value=f"BC-100{len(roster_df)+1}")
+            st_id = col_s1.text_input("SHS Student ID#:", value=f"SIM100{len(roster_df)+1}")
+            st_bc = col_s2.text_input("Scan/Type Keytag Barcode (Default: SHS ID):", value=f"SIM100{len(roster_df)+1}")
             st_fn = col_s3.text_input("First Name:")
             st_ln = col_s4.text_input("Last Name:")
 
