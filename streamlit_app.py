@@ -4,35 +4,95 @@ import requests
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+from sqlalchemy import create_engine, text
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Trojan Market - Store Management System",
+    page_title="Trojan Market - Punch Clock Terminal",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# --- FILE STORAGE & CONFIGURATION ---
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROSTER_FILE = os.path.join(ROOT_DIR, "roster.csv")
-SHIFTS_FILE = os.path.join(ROOT_DIR, "shifts.csv")
-INVENTORY_FILE = os.path.join(ROOT_DIR, "inventory.csv")
-SALES_FILE = os.path.join(ROOT_DIR, "sales.csv")
-AUDIT_FILE = os.path.join(ROOT_DIR, "audit_logs.csv")
-
 MAX_SHIFT_HOURS = 4.0
+ADMIN_USERS = ["admin.admin"]
+KIOSK_USERS = ["kiosk.org", "signin.org"]
 
-# Authorized Admin Accounts
-ADMIN_USERS = [
-    "admin.admin"
-]
+# Passwords (Defaults or fetched from .streamlit/secrets.toml)
+DEFAULT_ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", st.secrets.get("postgres", {}).get("ADMIN_PASSWORD", "DECA2026!"))
+DEFAULT_KIOSK_PASSWORD = st.secrets.get("KIOSK_PASSWORD", st.secrets.get("postgres", {}).get("KIOSK_PASSWORD", "LOGINDECA2026!"))
 
-# Passwords (Fallback defaults or fetched from .streamlit/secrets.toml)
-DEFAULT_ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "DECA2026!")
-DEFAULT_KIOSK_PASSWORD = st.secrets.get("KIOSK_PASSWORD", "LOGINDECA2026!")
+# --- NEON DATABASE ENGINE ---
+@st.cache_resource
+def get_db_engine():
+    if "postgres" not in st.secrets or "url" not in st.secrets["postgres"]:
+        st.error("❌ Missing Neon PostgreSQL connection string in `.streamlit/secrets.toml`!")
+        st.stop()
+    return create_engine(st.secrets["postgres"]["url"], pool_pre_ping=True)
 
-# --- STYLING (FORCE-HIDE SIDEBAR ON DESKTOP & MOBILE) ---
+engine = get_db_engine()
+
+# --- DATABASE SCHEMAS & INITIALIZATION ---
+def init_db():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS roster (
+                student_id VARCHAR(50) PRIMARY KEY,
+                barcode_id VARCHAR(50),
+                first_name VARCHAR(100),
+                last_name VARCHAR(100),
+                course VARCHAR(100),
+                track VARCHAR(100),
+                req_hours FLOAT DEFAULT 10.0,
+                photo_url TEXT
+            );
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS shifts (
+                id SERIAL PRIMARY KEY,
+                student_id VARCHAR(50),
+                name VARCHAR(200),
+                check_in VARCHAR(50),
+                check_out VARCHAR(50),
+                hours_logged FLOAT DEFAULT 0.0,
+                shift_type VARCHAR(100),
+                status VARCHAR(20),
+                flagged VARCHAR(100)
+            );
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS inventory (
+                item_id VARCHAR(50) PRIMARY KEY,
+                revtrak_sku VARCHAR(100),
+                item_name VARCHAR(200),
+                category VARCHAR(100),
+                stock INT DEFAULT 0,
+                unit_price FLOAT DEFAULT 0.0
+            );
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sales (
+                transaction_id VARCHAR(100) PRIMARY KEY,
+                timestamp VARCHAR(50),
+                item_id VARCHAR(50),
+                quantity INT,
+                total_price FLOAT,
+                payment_method VARCHAR(50)
+            );
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY,
+                timestamp VARCHAR(50),
+                user_email VARCHAR(100),
+                action VARCHAR(100),
+                details TEXT
+            );
+        """))
+
+init_db()
+
+# --- STYLING (FORCE-HIDE SIDEBAR & SINGLE-PAGE COMPACT KIOSK) ---
 st.markdown(
     """
     <style>
@@ -51,13 +111,14 @@ st.markdown(
     html, body, [data-testid="stAppViewContainer"] {
         background-color: #0b1120 !important;
         color: #e5e7eb !important;
+        overflow-x: hidden;
     }
     
     .block-container {
-        padding-top: 1.5rem !important;
-        padding-bottom: 2rem !important;
+        padding-top: 0.5rem !important;
+        padding-bottom: 0.5rem !important;
         background: #0b1120 !important;
-        max-width: 100% !important;
+        max-width: 98% !important;
     }
     
     h1, h2, h3, h4, h5, h6, p, div, span, label, li, button {
@@ -74,7 +135,7 @@ st.markdown(
         background: #1f2937;
         border: 1px solid rgba(148, 163, 184, 0.2);
         color: #dbeafe;
-        padding: 0.5rem 1rem;
+        padding: 0.4rem 0.8rem;
     }
     
     .stTabs [role="tab"][aria-selected="true"] {
@@ -106,32 +167,33 @@ st.markdown(
     
     [data-testid="stMetricValue"] {
         color: #f8fafc !important;
+        font-size: 1.5rem !important;
     }
     
     [data-testid="stMetricLabel"] {
         color: #cbd5e1 !important;
+        font-size: 0.85rem !important;
     }
     
     [data-testid="stMetricContainer"] {
         background: rgba(17, 24, 39, 0.9);
         border: 1px solid rgba(148, 163, 184, 0.2);
-        border-radius: 0.75rem;
-        padding: 0.75rem;
+        border-radius: 0.5rem;
+        padding: 0.5rem;
     }
     
     .stInfo, .stSuccess, .stWarning, .stError {
         background: rgba(30, 41, 59, 0.9);
         border: 1px solid rgba(148, 163, 184, 0.2);
+        padding: 0.5rem !important;
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-
 # --- TIME & SHIFT HELPERS ---
 def format_hours_mins(hours_val: float) -> str:
-    """Formats decimal hours into clean hours and minutes (e.g. '2 mins' or '1 hr 15 mins')."""
     total_minutes = int(round(float(hours_val) * 60))
     h = total_minutes // 60
     m = total_minutes % 60
@@ -143,70 +205,67 @@ def format_hours_mins(hours_val: float) -> str:
     else:
         return f"{m} min{'s' if m != 1 else ''}"
 
-
 def get_auto_shift_type() -> str:
-    """Auto-detects default shift type based on current time of day."""
     now_time = datetime.datetime.now().time()
-    if now_time < datetime.time(13, 0):
-        return "School Day Shift"
-    elif now_time < datetime.time(14, 10):
+    if now_time < datetime.time(14, 10):
         return "Prep Shift (Period 5-8)"
     else:
         return "After School Shift"
 
+# --- DB DATA LOAD & SAVE FUNCTIONS ---
+def load_table(table_name: str) -> pd.DataFrame:
+    try:
+        return pd.read_sql(f"SELECT * FROM {table_name}", engine)
+    except Exception:
+        return pd.DataFrame()
 
-# --- AUDIT LOGGING ENGINE ---
+def save_table(table_name: str, df: pd.DataFrame):
+    df.to_sql(table_name, engine, if_exists="replace", index=False)
+
 def log_audit_event(action: str, details: str):
     user_email = st.session_state.get("user_email", "system")
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    new_log = {
-        "timestamp": now_str,
-        "user_email": user_email,
-        "action": action,
-        "details": details
-    }
-    
-    audit_df = st.session_state.get("audit_df", load_or_create_df(AUDIT_FILE, get_default_audit()))
-    audit_df = pd.concat([audit_df, pd.DataFrame([new_log])], ignore_index=True)
-    save_df(AUDIT_FILE, audit_df)
-    st.session_state["audit_df"] = audit_df
-
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO audit_logs (timestamp, user_email, action, details) VALUES (:t, :u, :a, :d)"),
+            {"t": now_str, "u": user_email, "a": action, "d": details}
+        )
+    st.session_state["audit_df"] = load_table("audit_logs")
 
 # --- BARCODE KEYCARD RENDERER ---
 def render_barcode_keycard(student_id: str, barcode_val: str, student_name: str, track: str, photo_url: str = ""):
-    avatar_html = f'<img src="{photo_url}" style="width: 60px; height: 60px; border-radius: 50%; border: 2px solid #3b82f6; margin-bottom: 8px; object-fit: cover;" />' if photo_url else '<div style="font-size: 32px; margin-bottom: 4px;">👤</div>'
+    avatar_html = f'<img src="{photo_url}" style="width: 48px; height: 48px; border-radius: 50%; border: 2px solid #3b82f6; margin-bottom: 4px; object-fit: cover;" />' if photo_url else '<div style="font-size: 24px; margin-bottom: 2px;">👤</div>'
     
     html_code = f"""
     <div style="
         background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
         border: 2px solid #3b82f6;
-        border-radius: 16px;
-        padding: 16px;
-        width: 320px;
+        border-radius: 12px;
+        padding: 10px;
+        width: 280px;
         text-align: center;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        box-shadow: 0 6px 18px rgba(0,0,0,0.4);
         color: #ffffff;
         margin: auto;
     ">
-        <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: #93c5fd; font-weight: 700;">
+        <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: #93c5fd; font-weight: 700;">
             SIMSBURY HIGH SCHOOL
         </div>
-        <div style="font-size: 16px; font-weight: 800; color: #f8fafc; margin-bottom: 8px;">
+        <div style="font-size: 13px; font-weight: 800; color: #f8fafc; margin-bottom: 4px;">
             🛡️ TROJAN MARKET PASS
         </div>
         
         {avatar_html}
 
-        <div style="font-size: 15px; font-weight: 700; color: #ffffff;">
+        <div style="font-size: 13px; font-weight: 700; color: #ffffff;">
             {student_name}
         </div>
-        <div style="font-size: 11px; color: #60a5fa; margin-bottom: 8px;">
+        <div style="font-size: 10px; color: #60a5fa; margin-bottom: 6px;">
             ID: {student_id} • {track}
         </div>
         
-        <div style="background: #ffffff; padding: 8px 6px 2px 6px; border-radius: 10px; display: inline-block;">
+        <div style="background: #ffffff; padding: 4px 4px 1px 4px; border-radius: 6px; display: inline-block;">
             <svg id="barcode_{student_id}"></svg>
         </div>
     </div>
@@ -214,138 +273,22 @@ def render_barcode_keycard(student_id: str, barcode_val: str, student_name: str,
     <script>
         JsBarcode("#barcode_{student_id}", "{barcode_val}", {{
             format: "CODE128",
-            width: 2,
-            height: 44,
+            width: 1.8,
+            height: 36,
             displayValue: true,
-            fontSize: 12,
+            fontSize: 10,
             marginTop: 0,
             marginBottom: 0
         }});
     </script>
     """
-    components.html(html_code, height=270)
-
-
-# --- DATA HELPERS ---
-def normalize_dataframe(df: pd.DataFrame, numeric_columns=None, text_columns=None) -> pd.DataFrame:
-    if df is None:
-        return pd.DataFrame()
-    numeric_columns = numeric_columns or []
-    text_columns = text_columns or []
-
-    for col in numeric_columns:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-    for col in text_columns:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda v: "" if pd.isna(v) else str(v))
-
-    return df
-
-
-def load_or_create_df(file_path: str, default_df: pd.DataFrame) -> pd.DataFrame:
-    if not os.path.exists(file_path):
-        default_df.to_csv(file_path, index=False)
-        return default_df.copy()
-    try:
-        df = pd.read_csv(file_path)
-    except Exception:
-        default_df.to_csv(file_path, index=False)
-        return default_df.copy()
-
-    for col in default_df.columns:
-        if col not in df.columns:
-            df[col] = default_df[col].iloc[0] if len(default_df) > 0 and col in default_df else ""
-
-    return df
-
-
-def save_df(file_path: str, df: pd.DataFrame) -> None:
-    df.to_csv(file_path, index=False)
-
-
-# Default Datasets
-def get_default_roster() -> pd.DataFrame:
-    return pd.DataFrame([
-        {"student_id": "SIM1001", "barcode_id": "SIM1001", "first_name": "Caroline", "last_name": "Fair", "course": "1-Entrepreneurship", "track": "DECA President", "req_hours": 20, "photo_url": ""},
-        {"student_id": "SIM1002", "barcode_id": "SIM1002", "first_name": "Elizabeth", "last_name": "Cadoff", "course": "6-Marketing", "track": "VP-School Store", "req_hours": 20, "photo_url": ""},
-        {"student_id": "SIM1003", "barcode_id": "SIM1003", "first_name": "Radha", "last_name": "Bansal", "course": "1-Entrepreneurship", "track": "VP-Marketing", "req_hours": 20, "photo_url": ""},
-        {"student_id": "SIM1004", "barcode_id": "SIM1004", "first_name": "Liam", "last_name": "Ricciardelli", "course": "2-Marketing", "track": "Officer", "req_hours": 10, "photo_url": ""},
-        {"student_id": "SIM1005", "barcode_id": "SIM1005", "first_name": "Julian", "last_name": "Mass", "course": "2-Marketing", "track": "Honors: Store", "req_hours": 10, "photo_url": ""},
-        {"student_id": "SIM1006", "barcode_id": "SIM1006", "first_name": "Henry", "last_name": "Pfeiffer", "course": "6-Marketing", "track": "ICDC", "req_hours": 10, "photo_url": ""},
-        {"student_id": "SIM1007", "barcode_id": "SIM1007", "first_name": "Caleb", "last_name": "Deems", "course": "7-SEM", "track": "Honors: Store", "req_hours": 10, "photo_url": ""},
-        {"student_id": "SIM1008", "barcode_id": "SIM1008", "first_name": "Olivia", "last_name": "Campasano", "course": "Accounting 2", "track": "Store", "req_hours": 10, "photo_url": ""},
-        {"student_id": "SIM1009", "barcode_id": "13753", "first_name": "Anay", "last_name": "Gupta", "course": "Accounting 2", "track": "Store", "req_hours": 10, "photo_url": ""},
-    ])
-
-
-def get_default_shifts() -> pd.DataFrame:
-    return pd.DataFrame(columns=["student_id", "name", "check_in", "check_out", "hours_logged", "shift_type", "status", "flagged"])
-
-
-def get_default_inventory() -> pd.DataFrame:
-    return pd.DataFrame([
-        {"item_id": "SKU-001", "revtrak_sku": "RT-COOK-01", "item_name": "Fresh Baked Cookies", "category": "Food", "stock": 48, "unit_price": 1.50},
-        {"item_id": "SKU-002", "revtrak_sku": "RT-POPC-01", "item_name": "Fresh Popcorn Bag", "category": "Food", "stock": 30, "unit_price": 2.00},
-        {"item_id": "SKU-003", "revtrak_sku": "RT-SLUS-01", "item_name": "Slushy (Full Size)", "category": "Beverage", "stock": 25, "unit_price": 2.50},
-        {"item_id": "SKU-004", "revtrak_sku": "RT-HOOD-01", "item_name": "SHS Trojan Hoodie", "category": "Apparel", "stock": 15, "unit_price": 35.00},
-        {"item_id": "SKU-005", "revtrak_sku": "RT-TSHI-01", "item_name": "Trojan Spirit T-Shirt", "category": "Apparel", "stock": 22, "unit_price": 18.00},
-    ])
-
-
-def get_default_sales() -> pd.DataFrame:
-    return pd.DataFrame(columns=["transaction_id", "timestamp", "item_id", "quantity", "total_price", "payment_method"])
-
-
-def get_default_audit() -> pd.DataFrame:
-    return pd.DataFrame(columns=["timestamp", "user_email", "action", "details"])
-
-
-def reload_all_data():
-    rost_raw = load_or_create_df(ROSTER_FILE, get_default_roster())
-    if "barcode_id" not in rost_raw.columns:
-        rost_raw["barcode_id"] = rost_raw["student_id"]
-    if "photo_url" not in rost_raw.columns:
-        rost_raw["photo_url"] = ""
-
-    st.session_state["roster_df"] = normalize_dataframe(
-        rost_raw, numeric_columns=["req_hours"], text_columns=["student_id", "barcode_id", "first_name", "last_name", "photo_url"]
-    )
-    
-    shifts_raw = load_or_create_df(SHIFTS_FILE, get_default_shifts())
-    if "flagged" not in shifts_raw.columns:
-        shifts_raw["flagged"] = "NO"
-    
-    st.session_state["shifts_df"] = normalize_dataframe(
-        shifts_raw,
-        numeric_columns=["hours_logged"],
-        text_columns=["student_id", "name", "check_in", "check_out", "shift_type", "status", "flagged"],
-    )
-    
-    inv_raw = load_or_create_df(INVENTORY_FILE, get_default_inventory())
-    if "revtrak_sku" not in inv_raw.columns:
-        inv_raw["revtrak_sku"] = "RT-NONE"
-        
-    st.session_state["inventory_df"] = normalize_dataframe(
-        inv_raw, numeric_columns=["stock", "unit_price"]
-    )
-    st.session_state["sales_df"] = normalize_dataframe(
-        load_or_create_df(SALES_FILE, get_default_sales()),
-        numeric_columns=["quantity", "total_price"],
-        text_columns=["transaction_id", "timestamp", "item_id", "payment_method"],
-    )
-    st.session_state["audit_df"] = normalize_dataframe(
-        load_or_create_df(AUDIT_FILE, get_default_audit()),
-        text_columns=["timestamp", "user_email", "action", "details"]
-    )
-
+    components.html(html_code, height=210)
 
 # --- AUTOMATED REVTRAK SYNC ENGINE ---
 def sync_revtrak_orders(silent=False):
     if "revtrak" not in st.secrets:
         if not silent:
-            st.error("RevTrak secrets not configured. Please set up `.streamlit/secrets.toml`.")
+            st.error("RevTrak secrets not configured in `.streamlit/secrets.toml`.")
         return
 
     api_url = st.secrets["revtrak"].get("api_url", "")
@@ -353,95 +296,68 @@ def sync_revtrak_orders(silent=False):
 
     if not api_url or not api_key:
         if not silent:
-            st.error("Missing RevTrak API credentials in secrets configuration.")
+            st.error("Missing RevTrak API credentials.")
         return
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
     try:
-        response = requests.get(f"{api_url}/orders/recent", headers=headers, timeout=3)
-        if response.status_code != 200:
+        res = requests.get(f"{api_url}/orders/recent", headers={"Authorization": f"Bearer {api_key}"}, timeout=3)
+        if res.status_code != 200:
             if not silent:
-                st.error(f"RevTrak API call failed (HTTP {response.status_code}): {response.text}")
+                st.error(f"RevTrak API error ({res.status_code}): {res.text}")
             return
 
-        orders = response.json().get("orders", [])
-        inv_df = st.session_state.get("inventory_df", load_or_create_df(INVENTORY_FILE, get_default_inventory()))
-        sls_df = st.session_state.get("sales_df", load_or_create_df(SALES_FILE, get_default_sales()))
+        orders = res.json().get("orders", [])
+        sls_df = load_table("sales")
+        inv_df = load_table("inventory")
         updated = False
 
-        for order in orders:
-            order_id = order.get("order_id")
-            if not sls_df.empty and order_id in sls_df["transaction_id"].values:
-                continue
+        with engine.begin() as conn:
+            for order in orders:
+                order_id = order.get("order_id")
+                if not sls_df.empty and order_id in sls_df["transaction_id"].values:
+                    continue
 
-            for item in order.get("items", []):
-                rt_sku = item.get("sku")
-                qty = int(item.get("quantity", 1))
+                for item in order.get("items", []):
+                    rt_sku = item.get("sku")
+                    qty = int(item.get("quantity", 1))
 
-                match = inv_df[inv_df["revtrak_sku"] == rt_sku]
-                if not match.empty:
-                    idx = match.index[0]
-                    current_stock = int(inv_df.at[idx, "stock"])
-                    inv_df.at[idx, "stock"] = max(0, current_stock - qty)
+                    match = inv_df[inv_df["revtrak_sku"] == rt_sku]
+                    if not match.empty:
+                        item_id = match.iloc[0]["item_id"]
+                        price = float(item.get("price", 0.0)) * qty
+                        now_str = order.get("created_at", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-                    new_sale = {
-                        "transaction_id": order_id,
-                        "timestamp": order.get("created_at", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-                        "item_id": inv_df.at[idx, "item_id"],
-                        "quantity": qty,
-                        "total_price": float(item.get("price", 0.0)) * qty,
-                        "payment_method": "RevTrak Online",
-                    }
-                    sls_df = pd.concat([sls_df, pd.DataFrame([new_sale])], ignore_index=True)
-                    updated = True
+                        conn.execute(
+                            text("INSERT INTO sales (transaction_id, timestamp, item_id, quantity, total_price, payment_method) VALUES (:t_id, :ts, :i_id, :q, :p, 'RevTrak Online')"),
+                            {"t_id": order_id, "ts": now_str, "i_id": item_id, "q": qty, "p": price}
+                        )
+                        conn.execute(
+                            text("UPDATE inventory SET stock = GREATEST(0, stock - :q) WHERE revtrak_sku = :sku"),
+                            {"q": qty, "sku": rt_sku}
+                        )
+                        updated = True
 
         if updated:
-            save_df(INVENTORY_FILE, inv_df)
-            save_df(SALES_FILE, sls_df)
-            st.session_state["inventory_df"] = inv_df
-            st.session_state["sales_df"] = sls_df
-            log_audit_event("REVTRAK_SYNC", f"Imported new orders from RevTrak endpoint.")
-            st.toast("⚡ RevTrak Auto-Sync: New online sales imported & inventory updated!")
+            st.session_state["inventory_df"] = load_table("inventory")
+            st.session_state["sales_df"] = load_table("sales")
+            log_audit_event("REVTRAK_SYNC", "Imported new online orders from RevTrak to Neon DB.")
+            st.toast("⚡ RevTrak Auto-Sync: New sales saved to database!")
             st.rerun()
         else:
             if not silent:
-                st.info("Inventory is already up to date with RevTrak.")
+                st.info("Inventory is up to date with RevTrak.")
 
     except Exception as e:
         if not silent:
-            st.error(f"RevTrak sync error: {e}")
+            st.error(f"RevTrak sync exception: {e}")
 
-
-def fetch_revtrak_item_details(rt_sku: str) -> dict | None:
-    if "revtrak" not in st.secrets:
-        return None
-
-    api_url = st.secrets["revtrak"].get("api_url", "")
-    api_key = st.secrets["revtrak"].get("api_key", "")
-
-    if not api_url or not api_key:
-        return None
-
-    try:
-        res = requests.get(
-            f"{api_url}/catalog/items/{rt_sku}",
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=3,
-        )
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-    return None
-
-
-# Load state data
+# Load Initial Data Frame States from Neon DB
 if "roster_df" not in st.session_state:
-    reload_all_data()
+    st.session_state["roster_df"] = load_table("roster")
+    st.session_state["shifts_df"] = load_table("shifts")
+    st.session_state["inventory_df"] = load_table("inventory")
+    st.session_state["sales_df"] = load_table("sales")
+    st.session_state["audit_df"] = load_table("audit_logs")
 
 sync_revtrak_orders(silent=True)
 
@@ -450,9 +366,9 @@ shifts_df = st.session_state["shifts_df"]
 inventory_df = st.session_state["inventory_df"]
 sales_df = st.session_state["sales_df"]
 
-
 def student_lookup_by_code(query_val: str) -> pd.Series | None:
-    """Matches either SHS Student ID or linked Keytag Barcode ID."""
+    if roster_df.empty:
+        return None
     clean_val = str(query_val).strip().upper()
     match = roster_df[
         (roster_df["student_id"].astype(str).str.upper() == clean_val) | 
@@ -460,14 +376,13 @@ def student_lookup_by_code(query_val: str) -> pd.Series | None:
     ]
     return None if match.empty else match.iloc[0]
 
-
 def get_logged_hours(student_id: str) -> float:
-    """Calculates total completed hours logged for a specific student."""
+    if shifts_df.empty or "status" not in shifts_df.columns:
+        return 0.0
     c_shifts = shifts_df[(shifts_df["student_id"].astype(str) == str(student_id)) & (shifts_df["status"] == "COMPLETED")]
     if c_shifts.empty:
         return 0.0
     return pd.to_numeric(c_shifts["hours_logged"], errors="coerce").sum()
-
 
 # ----------------------------------------------------
 # AUTHENTICATION & LOGIN SCREEN
@@ -478,24 +393,24 @@ if "logged_in" not in st.session_state:
     st.session_state["is_admin"] = False
 
 if not st.session_state["logged_in"]:
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    l_col1, l_col2, l_col3 = st.columns([1, 1.5, 1])
+    st.markdown("<br>", unsafe_allow_html=True)
+    l_col1, l_col2, l_col3 = st.columns([1, 1.4, 1])
     
     with l_col2:
         st.markdown(
             """
-            <div style="background: #111827; border: 2px solid #2563eb; padding: 2rem; border-radius: 1rem; text-align: center;">
-                <h1 style="margin-bottom: 0;">🛡️ Trojan Market</h1>
-                <p style="color: #93c5fd; margin-top: 4px;">Simsbury High School DECA Store Portal</p>
+            <div style="background: #111827; border: 2px solid #2563eb; padding: 1.5rem; border-radius: 1rem; text-align: center;">
+                <h2 style="margin-bottom: 0;">🛡️ Trojan Market</h2>
+                <p style="color: #93c5fd; margin-top: 2px; font-size: 0.9rem;">Simsbury High School DECA Store Portal</p>
             </div>
             """,
             unsafe_allow_html=True
         )
         st.write("")
         with st.form(key="login_form"):
-            email_input = st.text_input("Enter Username / Email:", placeholder="admin.admin or kiosk.org").strip().lower()
+            email_input = st.text_input("Username / Email:", placeholder="admin.admin or kiosk.org").strip().lower()
             pass_input = st.text_input("Password:", type="password")
-            login_btn = st.form_submit_button("🔑 Sign In to Terminal")
+            login_btn = st.form_submit_button("🔑 Sign In")
             
         if login_btn:
             clean_user = email_input.strip().lower()
@@ -503,7 +418,6 @@ if not st.session_state["logged_in"]:
             if not clean_user:
                 st.error("Please enter a username or email address to sign in.")
             elif clean_user in ADMIN_USERS:
-                # STRICT admin.admin VERIFICATION
                 if not pass_input:
                     st.error("❌ Password is required for admin.admin sign-in.")
                     log_audit_event("FAILED_LOGIN", f"Missing password attempt for admin: {clean_user}")
@@ -516,8 +430,7 @@ if not st.session_state["logged_in"]:
                     st.session_state["is_admin"] = True
                     log_audit_event("ADMIN_LOGIN", f"Admin signed in as: {clean_user}")
                     st.rerun()
-            elif clean_user in ["kiosk.org", "signin.org"] or clean_user.endswith("@simsburyschools.net"):
-                # KIOSK MODE LOGIN WITH PASSWORD CHECK
+            elif clean_user in KIOSK_USERS or clean_user.endswith("@simsburyschools.net"):
                 if not pass_input:
                     st.error("❌ Password is required for Kiosk mode sign-in.")
                     log_audit_event("FAILED_LOGIN", f"Missing password attempt for kiosk: {clean_user}")
@@ -531,21 +444,17 @@ if not st.session_state["logged_in"]:
                     log_audit_event("KIOSK_LOGIN", f"Terminal kiosk signed in: {clean_user}")
                     st.rerun()
             else:
-                # REJECT UNRECOGNIZED USERS
-                st.error("❌ Access denied. Enter 'admin.admin' for admin access or 'kiosk.org' for kiosk terminal mode.")
+                st.error("❌ Access denied. Enter 'admin.admin' for admin access or 'kiosk.org' for terminal mode.")
                 log_audit_event("REJECTED_LOGIN", f"Attempted sign-in with unrecognized user: {clean_user}")
 
     st.stop()
 
-
-# --- HEADER & NAVIGATION CONTROL ---
-h_col1, h_col2 = st.columns([3, 1])
+# --- COMPACT HEADER ---
+h_col1, h_col2 = st.columns([4, 1])
 with h_col1:
-    st.title("Trojan Market")
     role_badge = "👑 Admin Portal" if st.session_state["is_admin"] else "📱 Kiosk Clock Terminal"
-    st.caption(f"Simsbury High School DECA • Logged in as: **{st.session_state['user_email']}** ({role_badge})")
+    st.markdown(f"<h3 style='margin:0;'>🛡️ Trojan Market <span style='font-size: 14px; color: #93c5fd; font-weight: normal;'>({role_badge})</span></h3>", unsafe_allow_html=True)
 with h_col2:
-    st.write("")
     if st.button("🚪 Sign Out"):
         log_audit_event("LOGOUT", f"User signed out: {st.session_state['user_email']}")
         st.session_state["logged_in"] = False
@@ -553,16 +462,12 @@ with h_col2:
         st.session_state["is_admin"] = False
         st.rerun()
 
-st.write("")
+st.markdown("<hr style='margin: 0.2rem 0 0.8rem 0; border-color: rgba(148,163,184,0.2);'>", unsafe_allow_html=True)
 
 # ----------------------------------------------------
-# SHARED VIEW: ID & TIME CLOCK FUNCTION
+# SHARED VIEW: SINGLE-PAGE PUNCH CLOCK TERMINAL
 # ----------------------------------------------------
 def render_time_clock_view():
-    st.header("Student Keytag / SHS ID Scanner & Shift Clock")
-    st.caption("⚡ Scan hardware barcode keytag or SHS Student ID card for instant clickless punch in/out.")
-
-    # --- CLICKLESS SCANNER AUTO-FOCUS JS ENGINE ---
     components.html(
         """
         <script>
@@ -576,40 +481,40 @@ def render_time_clock_view():
                 }
             }
         };
-        setTimeout(autoFocusScanField, 150);
-        setTimeout(autoFocusScanField, 400);
+        setTimeout(autoFocusScanField, 100);
+        setTimeout(autoFocusScanField, 300);
         </script>
         """,
         height=0,
     )
 
-    col_scan, col_info = st.columns([1.2, 1])
+    col_punch, col_status, col_profile = st.columns([1.1, 1, 1.1])
 
-    with col_scan:
+    with col_punch:
+        st.markdown("<h4 style='margin-bottom:2px;'>⏱️ Job Punch Clock</h4>", unsafe_allow_html=True)
         auto_shift = get_auto_shift_type()
-        shift_options = ["School Day Shift", "Prep Shift (Period 5-8)", "After School Shift", "Open House / Event"]
+        shift_options = ["Prep Shift (Period 5-8)", "After School Shift", "Open House / Event"]
         auto_index = shift_options.index(auto_shift) if auto_shift in shift_options else 0
 
         with st.form(key="scanner_form", clear_on_submit=True):
-            # SHIFT TYPE SELECTION AT THE TOP (WITH AUTOMATIC DEFAULT BY TIME)
             shift_type = st.selectbox(
-                "1. Shift Type (Auto-selected based on current time):",
+                "Shift Type (Auto-Selected by Schedule):",
                 shift_options,
                 index=auto_index,
-                help="Automatically switches based on the clock. You can override if needed."
+                help="Automatically selects Prep Shift or After School Shift. Open House is manual only."
             )
             scanned_barcode = st.text_input(
-                "2. ⚡ Scan Barcode Here (SHS ID or Trojan Pass Keytag):", 
+                "⚡ Scan Keytag / SHS ID Card:", 
                 key="barcode_field",
-                placeholder="Ready for hardware scan! Scan Barcode Here..."
+                placeholder="Scan Barcode Here..."
             )
-            submit_scan = st.form_submit_button("Process Shift Scan")
+            submit_scan = st.form_submit_button("⚡ Process Punch Scan")
 
         if submit_scan and scanned_barcode:
             global shifts_df
             student = student_lookup_by_code(scanned_barcode)
             if student is None:
-                st.error(f"❌ Barcode / ID '{scanned_barcode}' is not registered in the database.")
+                st.error(f"❌ Barcode / ID '{scanned_barcode}' not found in roster.")
             else:
                 student_name = f"{student['first_name']} {student['last_name']}"
                 st.session_state["active_pass_sid"] = str(student["student_id"])
@@ -617,28 +522,19 @@ def render_time_clock_view():
                 active_shifts = shifts_df[(shifts_df["student_id"].astype(str) == str(student["student_id"])) & (shifts_df["status"] == "ACTIVE")]
 
                 if active_shifts.empty:
-                    # Clock IN
                     now = datetime.datetime.now()
-                    new_shift = {
-                        "student_id": student["student_id"],
-                        "name": student_name,
-                        "check_in": now.strftime("%Y-%m-%d %H:%M:%S"),
-                        "check_out": "",
-                        "hours_logged": 0.0,
-                        "shift_type": shift_type,
-                        "status": "ACTIVE",
-                        "flagged": "NO",
-                    }
-                    shifts_df = pd.concat([shifts_df, pd.DataFrame([new_shift])], ignore_index=True)
-                    shifts_df = normalize_dataframe(shifts_df, numeric_columns=["hours_logged"])
-                    save_df(SHIFTS_FILE, shifts_df)
-                    st.session_state["shifts_df"] = shifts_df
+                    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("INSERT INTO shifts (student_id, name, check_in, check_out, hours_logged, shift_type, status, flagged) VALUES (:s_id, :n, :ci, '', 0.0, :st, 'ACTIVE', 'NO')"),
+                            {"s_id": student["student_id"], "n": student_name, "ci": now_str, "st": shift_type}
+                        )
+                    st.session_state["shifts_df"] = load_table("shifts")
                     log_audit_event("CLOCK_IN", f"{student_name} ({student['student_id']}) clocked in for {shift_type}")
-                    st.success(f"✅ Clocked IN: {student_name} ({student['track']}) at {now.strftime('%H:%M:%S')}")
+                    st.success(f"✅ PUNCH IN: {student_name} at {now.strftime('%H:%M:%S')}")
                     st.rerun()
                 else:
-                    # Clock OUT
-                    idx = active_shifts.index[0]
+                    shift_id = active_shifts.iloc[0]["id"]
                     checked_in = datetime.datetime.strptime(active_shifts.iloc[0]["check_in"], "%Y-%m-%d %H:%M:%S")
                     now = datetime.datetime.now()
                     raw_hours = (now - checked_in).total_seconds() / 3600.0
@@ -647,100 +543,88 @@ def render_time_clock_view():
                     if raw_hours > MAX_SHIFT_HOURS:
                         duration_hours = MAX_SHIFT_HOURS
                         flagged = "YES (Exceeded Max Hours)"
-                        st.warning(f"Shift exceeded limit ({MAX_SHIFT_HOURS}h). Duration capped and flagged for review.")
+                        st.warning(f"Shift exceeded limit ({MAX_SHIFT_HOURS}h). Duration capped.")
                     else:
                         duration_hours = round(raw_hours, 4)
 
-                    shifts_df.at[idx, "check_out"] = now.strftime("%Y-%m-%d %H:%M:%S")
-                    shifts_df.at[idx, "hours_logged"] = duration_hours
-                    shifts_df.at[idx, "status"] = "COMPLETED"
-                    shifts_df.at[idx, "flagged"] = flagged
+                    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("UPDATE shifts SET check_out = :co, hours_logged = :hl, status = 'COMPLETED', flagged = :fl WHERE id = :sid"),
+                            {"co": now_str, "hl": duration_hours, "fl": flagged, "sid": shift_id}
+                        )
 
-                    shifts_df = normalize_dataframe(shifts_df, numeric_columns=["hours_logged"])
-                    save_df(SHIFTS_FILE, shifts_df)
-                    st.session_state["shifts_df"] = shifts_df
-                    
+                    st.session_state["shifts_df"] = load_table("shifts")
                     logged_str = format_hours_mins(duration_hours)
                     log_audit_event("CLOCK_OUT", f"{student_name} ({student['student_id']}) clocked out. Logged {logged_str}")
-                    st.success(f"🛑 Clocked OUT: {student_name}. Logged {logged_str}!")
+                    st.success(f"🛑 PUNCH OUT: {student_name}. Logged {logged_str}!")
                     st.rerun()
 
-    with col_info:
-        st.subheader("Currently Clocked In")
-        active_now = shifts_df[shifts_df["status"] == "ACTIVE"] if "status" in shifts_df.columns else pd.DataFrame()
+    with col_status:
+        st.markdown("<h4 style='margin-bottom:2px;'>📋 Currently On Shift</h4>", unsafe_allow_html=True)
+        active_now = shifts_df[shifts_df["status"] == "ACTIVE"] if not shifts_df.empty and "status" in shifts_df.columns else pd.DataFrame()
         if active_now.empty:
-            st.info("No students are currently clocked in.")
+            st.info("No students currently clocked in.")
         else:
             st.dataframe(
                 active_now[["student_id", "name", "check_in", "shift_type"]],
                 use_container_width=True,
                 hide_index=True,
+                height=180
             )
 
-    st.markdown("---")
-    st.subheader("📱 Digital Barcode Keytag Pass & Profile View")
-    if roster_df.empty:
-        st.info("No students enrolled in roster.")
-    else:
-        student_opts = {f"{row['first_name']} {row['last_name']} (ID: {row['student_id']})": str(row['student_id']) for _, row in roster_df.iterrows()}
-        student_labels = list(student_opts.keys())
-        student_ids = list(student_opts.values())
+    with col_profile:
+        st.markdown("<h4 style='margin-bottom:2px;'>⏳ Student Hours Tally</h4>", unsafe_allow_html=True)
+        if roster_df.empty:
+            st.info("No students in database roster.")
+        else:
+            student_opts = {f"{row['first_name']} {row['last_name']} ({row['student_id']})": str(row['student_id']) for _, row in roster_df.iterrows()}
+            student_labels = list(student_opts.keys())
+            student_ids = list(student_opts.values())
 
-        active_sid = st.session_state.get("active_pass_sid", student_ids[0])
-        default_index = student_ids.index(active_sid) if active_sid in student_ids else 0
+            active_sid = st.session_state.get("active_pass_sid", student_ids[0])
+            default_index = student_ids.index(active_sid) if active_sid in student_ids else 0
 
-        selected_pass_label = st.selectbox("Select Student Profile:", student_labels, index=default_index)
-        pass_sid = student_opts[selected_pass_label]
-        pass_student = student_lookup_by_code(pass_sid)
+            selected_pass_label = st.selectbox("Active Profile View:", student_labels, index=default_index, label_visibility="collapsed")
+            pass_sid = student_opts[selected_pass_label]
+            pass_student = student_lookup_by_code(pass_sid)
 
-        # Hours Calculation & Countdown Tally
-        req_h = float(pass_student.get("req_hours", 10))
-        logged_h = get_logged_hours(str(pass_student["student_id"]))
-        rem_h = max(0.0, req_h - logged_h)
+            req_h = float(pass_student.get("req_hours", 10))
+            logged_h = get_logged_hours(str(pass_student["student_id"]))
+            rem_h = max(0.0, req_h - logged_h)
 
-        k_col1, k_col2 = st.columns([1, 1.5])
-        with k_col1:
             render_barcode_keycard(
                 student_id=str(pass_student["student_id"]),
                 barcode_val=str(pass_student["barcode_id"]),
                 student_name=f"{pass_student['first_name']} {pass_student['last_name']}",
-                track=f"{pass_student['track']} • {pass_student['course']}",
+                track=f"{pass_student['track']}",
                 photo_url=str(pass_student.get("photo_url", ""))
             )
-        with k_col2:
-            st.markdown(f"### Profile: **{pass_student['first_name']} {pass_student['last_name']}**")
-            st.write(f"• **SHS Student ID#:** `{pass_student['student_id']}`")
-            st.write(f"• **Assigned Keytag Barcode:** `{pass_student['barcode_id']}`")
-            st.write(f"• **Enrolled Course:** {pass_student['course']}")
-            st.write(f"• **DECA Role / Track:** {pass_student['track']}")
-            
-            st.markdown("#### ⏳ Shift Hours & Countdown Tally")
-            st.write(f"• **Target Requirement:** {req_h} hrs")
-            st.write(f"• **Completed Time:** `{format_hours_mins(logged_h)}`")
-            if rem_h == 0:
-                st.success("🎉 **Requirement Completed!** (0 remaining hours)")
-            else:
-                st.warning(f"⏳ **Remaining Hours Needed:** `{format_hours_mins(rem_h)}` ({rem_h:.2f} hrs left)")
 
+            p1, p2 = st.columns(2)
+            p1.metric("Completed", format_hours_mins(logged_h))
+            p2.metric("Remaining", "Done! 🎉" if rem_h == 0 else format_hours_mins(rem_h))
 
 # ----------------------------------------------------
 # ROUTING: KIOSK MODE (NO TABS) vs ADMIN MODE (FULL TABS)
 # ----------------------------------------------------
 if not st.session_state["is_admin"]:
-    # --- KIOSK MODE ---
     render_time_clock_view()
 
 else:
-    # --- ADMIN MODE (FULL ACCESS) ---
-    with st.expander("⚙️ Store Controls & System Settings"):
+    with st.expander("⚙️ Store Controls & Database Settings"):
         ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.5, 1, 1])
         with ctrl_col1:
             low_stock_limit = st.slider("Low stock warning threshold:", min_value=1, max_value=20, value=5)
         with ctrl_col2:
             st.write("")
             st.write("")
-            if st.button("🔄 Refresh Local Data"):
-                reload_all_data()
+            if st.button("🔄 Reload DB Data"):
+                st.session_state["roster_df"] = load_table("roster")
+                st.session_state["shifts_df"] = load_table("shifts")
+                st.session_state["inventory_df"] = load_table("inventory")
+                st.session_state["sales_df"] = load_table("sales")
+                st.session_state["audit_df"] = load_table("audit_logs")
                 st.rerun()
         with ctrl_col3:
             st.write("")
@@ -750,9 +634,9 @@ else:
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Enrolled Students", len(roster_df))
-    m2.metric("Active Shifts", int((shifts_df["status"] == "ACTIVE").sum()) if "status" in shifts_df.columns else 0)
-    low_stock_count = int((inventory_df["stock"] <= low_stock_limit).sum())
-    m3.metric("Total Items Stocked", int(inventory_df["stock"].sum()), delta=f"{low_stock_count} low" if low_stock_count else "Stock OK", delta_color="inverse" if low_stock_count else "normal")
+    m2.metric("Active Shifts", int((shifts_df["status"] == "ACTIVE").sum()) if not shifts_df.empty and "status" in shifts_df.columns else 0)
+    low_stock_count = int((inventory_df["stock"] <= low_stock_limit).sum()) if not inventory_df.empty else 0
+    m3.metric("Total Items Stocked", int(inventory_df["stock"].sum()) if not inventory_df.empty else 0, delta=f"{low_stock_count} low" if low_stock_count else "Stock OK", delta_color="inverse" if low_stock_count else "normal")
     m4.metric("Sales Recorded", len(sales_df))
 
     st.write("")
@@ -761,7 +645,7 @@ else:
         "🛡️ ID & Time Clock",
         "💳 RevTrak POS & Inventory",
         "📈 Advisor Dashboard",
-        "📊 Sheet Manager",
+        "📊 Database Manager",
         "📜 System Audit Logs"
     ])
 
@@ -774,25 +658,28 @@ else:
         st.header("RevTrak Automated POS & Live Inventory")
         st.caption("Sales auto-sync directly from RevTrak. Use admin overrides below for manual stock adjustments.")
 
-        st.subheader("Live Inventory Levels")
-        def highlight_low_stock(val):
-            try:
-                val_num = float(val)
-                if val_num == 0:
-                    return "background-color: #7f1d1d; color: white;"
-                elif val_num <= low_stock_limit:
-                    return "background-color: #78350f; color: white;"
-            except Exception:
-                pass
-            return ""
-
-        styler = inventory_df[["item_id", "revtrak_sku", "item_name", "category", "stock", "unit_price"]].style
-        if hasattr(styler, "map"):
-            styled_inventory = styler.map(highlight_low_stock, subset=["stock"])
+        if inventory_df.empty:
+            st.info("No catalog items in database.")
         else:
-            styled_inventory = styler.applymap(highlight_low_stock, subset=["stock"])
+            st.subheader("Live Inventory Levels")
+            def highlight_low_stock(val):
+                try:
+                    val_num = float(val)
+                    if val_num == 0:
+                        return "background-color: #7f1d1d; color: white;"
+                    elif val_num <= low_stock_limit:
+                        return "background-color: #78350f; color: white;"
+                except Exception:
+                    pass
+                return ""
 
-        st.dataframe(styled_inventory, use_container_width=True, hide_index=True)
+            styler = inventory_df[["item_id", "revtrak_sku", "item_name", "category", "stock", "unit_price"]].style
+            if hasattr(styler, "map"):
+                styled_inventory = styler.map(highlight_low_stock, subset=["stock"])
+            else:
+                styled_inventory = styler.applymap(highlight_low_stock, subset=["stock"])
+
+            st.dataframe(styled_inventory, use_container_width=True, hide_index=True)
 
         st.markdown("---")
         st.subheader("⚙️ Admin Inventory Override & Catalog Tools")
@@ -809,69 +696,39 @@ else:
                 override_reason = st.text_input("Reason for Override (Audit Logged):", placeholder="Damaged items, physical recount, promo giveaway...")
 
                 if st.button("⚠️ Force Update Inventory Stock"):
-                    inventory_df.at[r_idx, "stock"] = new_qty
-                    save_df(INVENTORY_FILE, inventory_df)
-                    st.session_state["inventory_df"] = inventory_df
-                    
-                    log_audit_event(
-                        "STOCK_OVERRIDE", 
-                        f"Overrode '{override_item_name}' stock from {current_qty} to {new_qty}. Reason: {override_reason if override_reason else 'None provided'}"
-                    )
-                    st.success(f"Stock for '{override_item_name}' overridden to {new_qty} units.")
+                    item_id_val = inventory_df.at[r_idx, "item_id"]
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("UPDATE inventory SET stock = :st WHERE item_id = :iid"),
+                            {"st": new_qty, "iid": item_id_val}
+                        )
+                    st.session_state["inventory_df"] = load_table("inventory")
+                    log_audit_event("STOCK_OVERRIDE", f"Overrode '{override_item_name}' stock from {current_qty} to {new_qty}. Reason: {override_reason if override_reason else 'None provided'}")
+                    st.success(f"Stock for '{override_item_name}' overridden to {new_qty} units in Neon DB.")
                     st.rerun()
 
         with t_add:
-            if "auto_name" not in st.session_state:
-                st.session_state["auto_name"] = ""
-            if "auto_price" not in st.session_state:
-                st.session_state["auto_price"] = 2.00
-            if "auto_cat" not in st.session_state:
-                st.session_state["auto_cat"] = "Food"
-
-            c1, c2, c_pull = st.columns([1, 1.5, 1])
+            c1, c2 = st.columns(2)
             new_sku = c1.text_input("SKU ID:", value=f"SKU-00{len(inventory_df)+1}")
             new_rsku = c2.text_input("RevTrak SKU:", value=f"RT-ITEM-0{len(inventory_df)+1}")
             
-            with c_pull:
-                st.write("")
-                st.write("")
-                if st.button("⚡ Auto-Pull Details from RevTrak"):
-                    fetched = fetch_revtrak_item_details(new_rsku)
-                    if fetched:
-                        st.session_state["auto_name"] = fetched.get("title", fetched.get("name", ""))
-                        st.session_state["auto_price"] = float(fetched.get("price", 2.00))
-                        st.session_state["auto_cat"] = fetched.get("category", "Food")
-                        st.success(f"Pulled '{st.session_state['auto_name']}' from RevTrak!")
-                        st.rerun()
-                    else:
-                        st.info("No matching RevTrak catalog item found for that SKU. Enter details manually.")
-
             c3, c4, c5, c6 = st.columns([1.8, 1.2, 1, 1])
-            new_name = c3.text_input("Item Name:", value=st.session_state["auto_name"])
-            cat_options = ["Food", "Beverage", "Apparel", "Merchandise", "Supplies"]
-            cat_idx = cat_options.index(st.session_state["auto_cat"]) if st.session_state["auto_cat"] in cat_options else 0
-            new_cat = c4.selectbox("Category:", cat_options, index=cat_idx)
+            new_name = c3.text_input("Item Name:")
+            new_cat = c4.selectbox("Category:", ["Food", "Beverage", "Apparel", "Merchandise", "Supplies"])
             new_stock = c5.number_input("Initial Stock:", min_value=0, value=20)
-            new_price = c6.number_input("Price ($):", min_value=0.0, value=st.session_state["auto_price"], step=0.25)
+            new_price = c6.number_input("Price ($):", min_value=0.0, value=2.00, step=0.25)
 
             if st.button("➕ Add Item to Catalog"):
                 if new_name.strip() == "":
                     st.error("Please enter an item name.")
                 else:
-                    new_item = {
-                        "item_id": new_sku,
-                        "revtrak_sku": new_rsku,
-                        "item_name": new_name,
-                        "category": new_cat,
-                        "stock": new_stock,
-                        "unit_price": new_price,
-                    }
-                    inventory_df = pd.concat([inventory_df, pd.DataFrame([new_item])], ignore_index=True)
-                    inventory_df = normalize_dataframe(inventory_df, numeric_columns=["stock", "unit_price"])
-                    save_df(INVENTORY_FILE, inventory_df)
-                    st.session_state["inventory_df"] = inventory_df
-                    
-                    log_audit_event("ADD_PRODUCT", f"Added new product '{new_name}' ({new_sku}) with stock {new_stock}")
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("INSERT INTO inventory (item_id, revtrak_sku, item_name, category, stock, unit_price) VALUES (:iid, :rsku, :name, :cat, :st, :pr)"),
+                            {"iid": new_sku, "rsku": new_rsku, "name": new_name, "cat": new_cat, "st": new_stock, "pr": new_price}
+                        )
+                    st.session_state["inventory_df"] = load_table("inventory")
+                    log_audit_event("ADD_PRODUCT", f"Added product '{new_name}' ({new_sku}) to Neon DB.")
                     st.success(f"Added item '{new_name}' ({new_sku})!")
                     st.rerun()
 
@@ -880,36 +737,37 @@ else:
         st.header("DECA Advisor & Student Progress Dashboard")
         st.caption("Tracks required shift hours, countdown tallies, links SHS ID / keytag barcodes to student profiles.")
 
-        summary_df = roster_df.copy()
-        summary_df["hours_logged"] = summary_df["student_id"].apply(lambda sid: get_logged_hours(str(sid)))
-        summary_df["progress_%"] = ((summary_df["hours_logged"] / summary_df["req_hours"]) * 100).round(1)
+        if roster_df.empty:
+            st.info("No enrolled students in the database.")
+        else:
+            summary_df = roster_df.copy()
+            summary_df["hours_logged"] = summary_df["student_id"].apply(lambda sid: get_logged_hours(str(sid)))
+            summary_df["progress_%"] = ((summary_df["hours_logged"] / summary_df["req_hours"].astype(float)) * 100).round(1)
 
-        a1, a2, a3 = st.columns(3)
-        a1.metric("Enrolled Students", len(summary_df))
-        total_hours_sum = summary_df['hours_logged'].sum()
-        a2.metric("Total Time Completed", format_hours_mins(total_hours_sum))
-        a3.metric("Average Course Completion", f"{summary_df['progress_%'].mean():.1f}%")
+            a1, a2, a3 = st.columns(3)
+            a1.metric("Enrolled Students", len(summary_df))
+            total_hours_sum = summary_df['hours_logged'].sum()
+            a2.metric("Total Time Completed", format_hours_mins(total_hours_sum))
+            a3.metric("Average Course Completion", f"{summary_df['progress_%'].mean():.1f}%")
 
-        st.subheader("Student Hours Progress & Countdown Tally Roster")
-        for idx, row in summary_df.iterrows():
-            req_h = float(row['req_hours'])
-            log_h = float(row['hours_logged'])
-            rem_h = max(0.0, req_h - log_h)
-            
-            c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1.4, 1.6])
-            c_name.markdown(f"**{row['first_name']} {row['last_name']}** (`ID: {row['student_id']}` | `BC: {row['barcode_id']}`)")
-            c_course.caption(f"{row['course']} • {row['track']}")
-            
-            rem_text = "Completed! 🎉" if rem_h == 0 else f"Rem: {format_hours_mins(rem_h)}"
-            c_hours.markdown(f"**{format_hours_mins(log_h)}** / {req_h} hrs  \n<span style='font-size: 12px; color: #93c5fd;'>{rem_text}</span>", unsafe_allow_html=True)
-            
-            pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0)
-            c_bar.progress(pct, text=f"{row['progress_%']}%")
+            st.subheader("Student Hours Progress & Countdown Tally Roster")
+            for idx, row in summary_df.iterrows():
+                req_h = float(row['req_hours'])
+                log_h = float(row['hours_logged'])
+                rem_h = max(0.0, req_h - log_h)
+                
+                c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1.4, 1.6])
+                c_name.markdown(f"**{row['first_name']} {row['last_name']}** (`ID: {row['student_id']}` | `BC: {row['barcode_id']}`)")
+                c_course.caption(f"{row['course']} • {row['track']}")
+                
+                rem_text = "Completed! 🎉" if rem_h == 0 else f"Rem: {format_hours_mins(rem_h)}"
+                c_hours.markdown(f"**{format_hours_mins(log_h)}** / {req_h} hrs  \n<span style='font-size: 12px; color: #93c5fd;'>{rem_text}</span>", unsafe_allow_html=True)
+                
+                pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0)
+                c_bar.progress(pct, text=f"{row['progress_%']}%")
 
         st.markdown("---")
         st.subheader("⚡ Rapid Barcode Keytag / SHS ID Pairing Terminal")
-        st.caption("Select a student profile, click into the input field, and zap either their SHS Student ID card or physical keytag.")
-
         if roster_df.empty:
             st.warning("No students in roster to link.")
         else:
@@ -928,6 +786,99 @@ else:
                 save_pair_btn = st.form_submit_button("🔗 Link Barcode / SHS ID to Profile")
 
             if save_pair_btn:
-                r_idx = roster_df.index[roster_df["student_id"].astype(str) == str(target_sid)][0]
-                roster_df.at[r_idx, "barcode_id"] = scanned_pair_barcode.strip()
-                save_df
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("UPDATE roster SET barcode_id = :bc WHERE student_id = :sid"),
+                        {"bc": scanned_pair_barcode.strip(), "sid": str(target_sid)}
+                    )
+                st.session_state["roster_df"] = load_table("roster")
+                log_audit_event("LINK_BARCODE", f"Linked barcode '{scanned_pair_barcode.strip()}' to student {current_st['first_name']} {current_st['last_name']} ({target_sid})")
+                st.success(f"✅ Barcode / SHS ID '{scanned_pair_barcode.strip()}' linked to {current_st['first_name']} {current_st['last_name']}!")
+                st.rerun()
+
+        st.markdown("---")
+        with st.expander("👤 Register New Student to Database Roster"):
+            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+            st_id = col_s1.text_input("SHS Student ID#:", value=f"SIM100{len(roster_df)+1}")
+            st_bc = col_s2.text_input("Scan/Type Keytag Barcode (Default: SHS ID):", value=f"SIM100{len(roster_df)+1}")
+            st_fn = col_s3.text_input("First Name:")
+            st_ln = col_s4.text_input("Last Name:")
+
+            col_s5, col_s6, col_s7 = st.columns(3)
+            st_course = col_s5.selectbox("Enrolled Course:", ["1-Entrepreneurship", "2-Marketing", "6-Marketing", "7-SEM", "Accounting 2", "Store Management"])
+            st_track = col_s6.text_input("DECA Role / Track:", value="Store Officer")
+            st_req = col_s7.number_input("Required Hours:", min_value=1, max_value=100, value=10)
+
+            if st.button("➕ Register Student to Database"):
+                if st_fn.strip() == "" or st_ln.strip() == "":
+                    st.error("Please enter student first and last name.")
+                else:
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("INSERT INTO roster (student_id, barcode_id, first_name, last_name, course, track, req_hours, photo_url) VALUES (:sid, :bc, :fn, :ln, :crs, :trk, :req, '')"),
+                            {"sid": st_id, "bc": st_bc, "fn": st_fn, "ln": st_ln, "crs": st_course, "trk": st_track, "req": st_req}
+                        )
+                    st.session_state["roster_df"] = load_table("roster")
+                    log_audit_event("REGISTER_STUDENT", f"Registered student {st_fn} {st_ln} ({st_id}) into Neon DB.")
+                    st.success(f"Registered {st_fn} {st_ln} ({st_id})!")
+                    st.rerun()
+
+        st.markdown("---")
+        with st.expander("🗑️ Remove Student from Database Roster"):
+            if roster_df.empty:
+                st.warning("No students in database to remove.")
+            else:
+                rem_opts = {f"{row['first_name']} {row['last_name']} (ID: {row['student_id']})": str(row['student_id']) for _, row in roster_df.iterrows()}
+                student_to_rem_key = st.selectbox("Select Student to Remove:", list(rem_opts.keys()), key="rem_student_select")
+                rem_sid = rem_opts[student_to_rem_key]
+
+                if st.button("❌ Permanently Delete Student Profile"):
+                    with engine.begin() as conn:
+                        conn.execute(text("DELETE FROM roster WHERE student_id = :sid"), {"sid": str(rem_sid)})
+                    st.session_state["roster_df"] = load_table("roster")
+                    log_audit_event("DELETE_STUDENT", f"Deleted student ({rem_sid}) from Neon DB.")
+                    st.success(f"Removed student profile ({rem_sid}) from Neon DB.")
+                    st.rerun()
+
+    # TAB 4: DATABASE MANAGER
+    with tabs[3]:
+        st.header("Neon Cloud Database Manager")
+        st.caption("Directly inspect and update Neon PostgreSQL database tables.")
+
+        sheet_option = st.radio(
+            "Select Table to Edit:",
+            ["roster", "shifts", "inventory", "sales"],
+            horizontal=True,
+        )
+
+        target_df = load_table(sheet_option)
+        edited_df = st.data_editor(target_df, num_rows="dynamic", use_container_width=True)
+
+        if st.button("💾 Save Database Changes"):
+            save_table(sheet_option, edited_df)
+            st.session_state[f"{sheet_option}_df"] = load_table(sheet_option)
+            log_audit_event("DB_EDITOR_SAVE", f"Manually updated Neon DB table '{sheet_option}'.")
+            st.success(f"Table '{sheet_option}' successfully updated in Neon PostgreSQL!")
+            st.rerun()
+
+    # TAB 5: SYSTEM AUDIT LOGS
+    with tabs[4]:
+        st.header("📜 System Audit & Security Logs")
+        st.caption("Live timeline of all admin actions, time clock events, overrides, and user sign-ins stored in Neon DB.")
+
+        audit_df = load_table("audit_logs")
+        if audit_df.empty:
+            st.info("No audit logs recorded yet.")
+        else:
+            st.dataframe(
+                audit_df.sort_values(by="id", ascending=False),
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            if st.button("🗑️ Clear Audit History"):
+                with engine.begin() as conn:
+                    conn.execute(text("DELETE FROM audit_logs"))
+                st.session_state["audit_df"] = load_table("audit_logs")
+                st.success("Audit history cleared from database.")
+                st.rerun()
