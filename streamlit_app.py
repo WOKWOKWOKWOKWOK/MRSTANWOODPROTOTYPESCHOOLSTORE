@@ -746,8 +746,9 @@ else:
             st.info("No enrolled students in the database.")
         else:
             summary_df = roster_df.copy()
+            summary_df["req_hours"] = pd.to_numeric(summary_df["req_hours"], errors="coerce").fillna(10.0)
             summary_df["hours_logged"] = summary_df["student_id"].apply(lambda sid: get_logged_hours(str(sid)))
-            summary_df["progress_%"] = ((summary_df["hours_logged"] / summary_df["req_hours"].astype(float)) * 100).round(1)
+            summary_df["progress_%"] = ((summary_df["hours_logged"] / summary_df["req_hours"]) * 100).round(1)
 
             a1, a2, a3 = st.columns(3)
             a1.metric("Enrolled Students", len(summary_df))
@@ -757,8 +758,8 @@ else:
 
             st.subheader("Student Hours Progress & Countdown Tally Roster")
             for idx, row in summary_df.iterrows():
-                req_h = float(row['req_hours'])
-                log_h = float(row['hours_logged'])
+                req_h = float(row['req_hours']) if pd.notna(row['req_hours']) else 10.0
+                log_h = float(row['hours_logged']) if pd.notna(row['hours_logged']) else 0.0
                 rem_h = max(0.0, req_h - log_h)
                 
                 c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1.4, 1.6])
@@ -768,7 +769,7 @@ else:
                 rem_text = "Completed! 🎉" if rem_h == 0 else f"Rem: {format_hours_mins(rem_h)}"
                 c_hours.markdown(f"**{format_hours_mins(log_h)}** / {req_h} hrs  \n<span style='font-size: 12px; color: #93c5fd;'>{rem_text}</span>", unsafe_allow_html=True)
                 
-                pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0)
+                pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0) if pd.notna(row["progress_%"]) else 0.0
                 c_bar.progress(pct, text=f"{row['progress_%']}%")
 
         st.markdown("---")
