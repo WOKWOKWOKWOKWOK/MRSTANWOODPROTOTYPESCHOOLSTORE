@@ -591,21 +591,24 @@ def render_time_clock_view():
             pass_sid = student_opts[selected_pass_label]
             pass_student = student_lookup_by_code(pass_sid)
 
-            req_h = float(pass_student.get("req_hours", 10))
-            logged_h = get_logged_hours(str(pass_student["student_id"]))
-            rem_h = max(0.0, req_h - logged_h)
+            if pass_student is not None:
+                req_h = float(pass_student["req_hours"]) if "req_hours" in pass_student and pd.notna(pass_student["req_hours"]) else 10.0
+                logged_h = get_logged_hours(str(pass_student["student_id"]))
+                rem_h = max(0.0, req_h - logged_h)
 
-            render_barcode_keycard(
-                student_id=str(pass_student["student_id"]),
-                barcode_val=str(pass_student["barcode_id"]),
-                student_name=f"{pass_student['first_name']} {pass_student['last_name']}",
-                track=f"{pass_student['track']}",
-                photo_url=str(pass_student.get("photo_url", ""))
-            )
+                render_barcode_keycard(
+                    student_id=str(pass_student["student_id"]),
+                    barcode_val=str(pass_student.get("barcode_id", pass_student["student_id"])),
+                    student_name=f"{pass_student['first_name']} {pass_student['last_name']}",
+                    track=f"{pass_student.get('track', '')}",
+                    photo_url=str(pass_student.get("photo_url", ""))
+                )
 
-            p1, p2 = st.columns(2)
-            p1.metric("Completed", format_hours_mins(logged_h))
-            p2.metric("Remaining", "Done! 🎉" if rem_h == 0 else format_hours_mins(rem_h))
+                p1, p2 = st.columns(2)
+                p1.metric("Completed", format_hours_mins(logged_h))
+                p2.metric("Remaining", "Done! 🎉" if rem_h == 0 else format_hours_mins(rem_h))
+            else:
+                st.info("Select a student to view details.")
 
 # ----------------------------------------------------
 # ROUTING: KIOSK MODE (NO TABS) vs ADMIN MODE (FULL TABS)
@@ -780,14 +783,15 @@ else:
                 target_sid = r_opts[selected_student_key]
                 current_st = student_lookup_by_code(target_sid)
                 
+                current_barcode = str(current_st["barcode_id"]) if current_st is not None else str(target_sid)
                 scanned_pair_barcode = st.text_input(
                     "2. Click Here & Zap Physical Keytag or SHS Student ID with USB Scanner:", 
-                    value=str(current_st["barcode_id"]),
+                    value=current_barcode,
                     help="Pull the trigger on your hardware scanner. It will auto-fill this input box."
                 )
                 save_pair_btn = st.form_submit_button("🔗 Link Barcode / SHS ID to Profile")
 
-            if save_pair_btn:
+            if save_pair_btn and current_st is not None:
                 with engine.begin() as conn:
                     conn.execute(
                         text("UPDATE roster SET barcode_id = :bc WHERE student_id = :sid"),
