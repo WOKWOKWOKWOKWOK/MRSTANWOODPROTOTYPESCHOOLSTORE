@@ -92,7 +92,7 @@ def init_db():
 
 init_db()
 
-# --- STYLING (FORCE-HIDE SIDEBAR & SINGLE-PAGE COMPACT KIOSK) ---
+# --- STYLING (POOF TOP HEADER BAR & SIDEBAR) ---
 st.markdown(
     """
     <style>
@@ -101,7 +101,9 @@ st.markdown(
     [data-testid="stSidebarCollapsedControl"],
     [data-testid="collapsedControl"],
     section[data-testid="stSidebar"],
-    button[aria-label="Toggle sidebar"] {
+    button[aria-label="Toggle sidebar"],
+    header,
+    [data-testid="stHeader"] {
         display: none !important;
         visibility: hidden !important;
         width: 0 !important;
@@ -115,7 +117,7 @@ st.markdown(
     }
     
     .block-container {
-        padding-top: 0.5rem !important;
+        padding-top: 1rem !important;
         padding-bottom: 0.5rem !important;
         background: #0b1120 !important;
         max-width: 98% !important;
