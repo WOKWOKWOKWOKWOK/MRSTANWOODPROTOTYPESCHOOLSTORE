@@ -560,7 +560,28 @@ st.write("")
 # ----------------------------------------------------
 def render_time_clock_view():
     st.header("Student Keytag / SHS ID Scanner & Shift Clock")
-    st.caption("Scan hardware barcode keytag or SHS Student ID card (or type ID manually).")
+    st.caption("⚡ Scan hardware barcode keytag or SHS Student ID card for instant clickless punch in/out.")
+
+    # --- CLICKLESS SCANNER AUTO-FOCUS JS ENGINE ---
+    components.html(
+        """
+        <script>
+        const autoFocusScanField = () => {
+            const mainDoc = window.parent.document;
+            const textInputs = mainDoc.querySelectorAll('input[type="text"]');
+            for (let input of textInputs) {
+                if (input.placeholder && input.placeholder.includes("Scan Barcode Here")) {
+                    input.focus();
+                    break;
+                }
+            }
+        };
+        setTimeout(autoFocusScanField, 150);
+        setTimeout(autoFocusScanField, 400);
+        </script>
+        """,
+        height=0,
+    )
 
     col_scan, col_info = st.columns([1.2, 1])
 
@@ -580,7 +601,7 @@ def render_time_clock_view():
             scanned_barcode = st.text_input(
                 "2. ⚡ Scan Barcode Here (SHS ID or Trojan Pass Keytag):", 
                 key="barcode_field",
-                placeholder="Click here & trigger USB scanner..."
+                placeholder="Ready for hardware scan! Scan Barcode Here..."
             )
             submit_scan = st.form_submit_button("Process Shift Scan")
 
@@ -909,126 +930,4 @@ else:
             if save_pair_btn:
                 r_idx = roster_df.index[roster_df["student_id"].astype(str) == str(target_sid)][0]
                 roster_df.at[r_idx, "barcode_id"] = scanned_pair_barcode.strip()
-                save_df(ROSTER_FILE, roster_df)
-                st.session_state["roster_df"] = roster_df
-                
-                log_audit_event("LINK_BARCODE", f"Linked barcode '{scanned_pair_barcode.strip()}' to student {current_st['first_name']} {current_st['last_name']} ({target_sid})")
-                st.success(f"✅ Barcode / SHS ID '{scanned_pair_barcode.strip()}' successfully linked to {current_st['first_name']} {current_st['last_name']}!")
-                st.rerun()
-
-        st.markdown("---")
-        with st.expander("👤 Register New Student to Roster"):
-            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-            st_id = col_s1.text_input("SHS Student ID#:", value=f"SIM100{len(roster_df)+1}")
-            st_bc = col_s2.text_input("Scan/Type Keytag Barcode (Default: SHS ID):", value=f"SIM100{len(roster_df)+1}")
-            st_fn = col_s3.text_input("First Name:")
-            st_ln = col_s4.text_input("Last Name:")
-
-            col_s5, col_s6, col_s7 = st.columns(3)
-            st_course = col_s5.selectbox("Enrolled Course:", ["1-Entrepreneurship", "2-Marketing", "6-Marketing", "7-SEM", "Accounting 2", "Store Management"])
-            st_track = col_s6.text_input("DECA Role / Track:", value="Store Officer")
-            st_req = col_s7.number_input("Required Hours:", min_value=1, max_value=100, value=10)
-
-            if st.button("➕ Register Student to Roster"):
-                if st_fn.strip() == "" or st_ln.strip() == "":
-                    st.error("Please enter student first and last name.")
-                else:
-                    new_student = {
-                        "student_id": st_id,
-                        "barcode_id": st_bc,
-                        "first_name": st_fn,
-                        "last_name": st_ln,
-                        "course": st_course,
-                        "track": st_track,
-                        "req_hours": st_req,
-                        "photo_url": "",
-                    }
-                    roster_df = pd.concat([roster_df, pd.DataFrame([new_student])], ignore_index=True)
-                    roster_df = normalize_dataframe(roster_df, numeric_columns=["req_hours"])
-                    save_df(ROSTER_FILE, roster_df)
-                    st.session_state["roster_df"] = roster_df
-                    
-                    log_audit_event("REGISTER_STUDENT", f"Registered new student {st_fn} {st_ln} ({st_id})")
-                    st.success(f"Registered {st_fn} {st_ln} ({st_id})!")
-                    st.rerun()
-
-        st.markdown("---")
-        with st.expander("🗑️ Remove / Unenroll Student from Roster"):
-            if roster_df.empty:
-                st.warning("No students in roster to remove.")
-            else:
-                rem_opts = {f"{row['first_name']} {row['last_name']} (ID: {row['student_id']})": str(row['student_id']) for _, row in roster_df.iterrows()}
-                student_to_rem_key = st.selectbox("Select Student to Remove:", list(rem_opts.keys()), key="rem_student_select")
-                rem_sid = rem_opts[student_to_rem_key]
-                rem_st = student_lookup_by_code(rem_sid)
-
-                if st.button("❌ Permanently Delete Student Profile"):
-                    roster_df = roster_df[roster_df["student_id"].astype(str) != str(rem_sid)]
-                    save_df(ROSTER_FILE, roster_df)
-                    st.session_state["roster_df"] = roster_df
-                    
-                    log_audit_event("DELETE_STUDENT", f"Deleted student {rem_st['first_name']} {rem_st['last_name']} ({rem_sid})")
-                    st.success(f"Removed {rem_st['first_name']} {rem_st['last_name']} ({rem_sid}) from roster.")
-                    st.rerun()
-
-    # TAB 4: SHEET MANAGER
-    with tabs[3]:
-        st.header("Custom Database Manager")
-        st.caption("Directly inspect and update store CSV data files.")
-
-        sheet_option = st.radio(
-            "Select Sheet to Edit:",
-            ["Student Roster", "Shift Logs", "Master Inventory", "Sales Ledger"],
-            horizontal=True,
-        )
-
-        if sheet_option == "Student Roster":
-            target_df = roster_df.copy()
-        elif sheet_option == "Shift Logs":
-            target_df = shifts_df.copy()
-        elif sheet_option == "Master Inventory":
-            target_df = inventory_df.copy()
-        else:
-            target_df = sales_df.copy()
-
-        edited_df = st.data_editor(target_df, num_rows="dynamic", use_container_width=True)
-
-        if st.button("💾 Save Sheet Changes"):
-            if sheet_option == "Student Roster":
-                st.session_state["roster_df"] = normalize_dataframe(edited_df, numeric_columns=["req_hours"])
-                save_df(ROSTER_FILE, st.session_state["roster_df"])
-            elif sheet_option == "Shift Logs":
-                st.session_state["shifts_df"] = normalize_dataframe(edited_df, numeric_columns=["hours_logged"])
-                save_df(SHIFTS_FILE, st.session_state["shifts_df"])
-            elif sheet_option == "Master Inventory":
-                st.session_state["inventory_df"] = normalize_dataframe(edited_df, numeric_columns=["stock", "unit_price"])
-                save_df(INVENTORY_FILE, st.session_state["inventory_df"])
-            else:
-                st.session_state["sales_df"] = normalize_dataframe(edited_df, numeric_columns=["quantity", "total_price"])
-                save_df(SALES_FILE, st.session_state["sales_df"])
-
-            log_audit_event("SHEET_EDITOR_SAVE", f"Manually edited and saved {sheet_option} database file.")
-            st.success("Changes saved successfully to disk.")
-            st.rerun()
-
-    # TAB 5: SYSTEM AUDIT LOGS
-    with tabs[4]:
-        st.header("📜 System Audit & Security Logs")
-        st.caption("Live timeline of all admin actions, time clock events, overrides, and user sign-ins.")
-
-        audit_df = st.session_state.get("audit_df", load_or_create_df(AUDIT_FILE, get_default_audit()))
-        if audit_df.empty:
-            st.info("No audit logs recorded yet.")
-        else:
-            st.dataframe(
-                audit_df.sort_values(by="timestamp", ascending=False),
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            if st.button("🗑️ Clear Audit History"):
-                empty_audit = get_default_audit()
-                save_df(AUDIT_FILE, empty_audit)
-                st.session_state["audit_df"] = empty_audit
-                st.success("Audit logs cleared.")
-                st.rerun()
+                save_df
