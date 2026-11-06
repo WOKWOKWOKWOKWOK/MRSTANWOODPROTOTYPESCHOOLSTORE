@@ -29,9 +29,16 @@ def clean_str(val, default="") -> str:
     if pd.isna(val) or val is None:
         return default
     s = str(val).strip()
-    if s.lower() in ["nan", "none", "<na>"]:
+    if s.lower() in ["nan", "none", "<na>", "null"]:
         return default
     return s
+
+def get_current_et_naive() -> datetime.datetime:
+    """Returns current US/Eastern time as naive datetime for reliable math."""
+    try:
+        return datetime.datetime.now(ZoneInfo("America/New_York")).replace(tzinfo=None)
+    except Exception:
+        return datetime.datetime.now().replace(tzinfo=None)
 
 # --- NEON DATABASE ENGINE ---
 @st.cache_resource
@@ -207,7 +214,7 @@ st.markdown(
 
 # --- TIME & SHIFT HELPERS ---
 def format_hours_mins(hours_val: float) -> str:
-    total_minutes = int(round(float(hours_val) * 60))
+    total_minutes = int(round(max(0.0, float(hours_val)) * 60))
     h = total_minutes // 60
     m = total_minutes % 60
     
@@ -220,11 +227,7 @@ def format_hours_mins(hours_val: float) -> str:
 
 def get_auto_shift_type() -> str:
     """Auto-detect shift type based on US Eastern Time (CT Local Time)."""
-    try:
-        now_et = datetime.datetime.now(ZoneInfo("America/New_York")).time()
-    except Exception:
-        now_et = datetime.datetime.now().time()
-        
+    now_et = get_current_et_naive().time()
     if now_et < datetime.time(14, 10):
         return "Prep Shift (Period 5-8)"
     else:
@@ -246,7 +249,7 @@ def save_table(table_name: str, df: pd.DataFrame):
 
 def log_audit_event(action: str, details: str):
     user_email = st.session_state.get("user_email", "system")
-    now_str = datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S")
+    now_str = get_current_et_naive().strftime("%Y-%m-%d %H:%M:%S")
     with engine.begin() as conn:
         conn.execute(
             text("INSERT INTO audit_logs (timestamp, user_email, action, details) VALUES (:t, :u, :a, :d)"),
@@ -353,7 +356,7 @@ def sync_revtrak_orders(silent=False):
                     if not match.empty:
                         item_id = match.iloc[0]["item_id"]
                         price = float(item.get("price", 0.0)) * qty
-                        now_str = order.get("created_at", datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S"))
+                        now_str = order.get("created_at", get_current_et_naive().strftime("%Y-%m-%d %H:%M:%S"))
 
                         conn.execute(
                             text("INSERT INTO sales (transaction_id, timestamp, item_id, quantity, total_price, payment_method) VALUES (:t_id, :ts, :i_id, :q, :p, 'RevTrak Online')"),
@@ -411,19 +414,24 @@ def get_logged_hours(student_id: str) -> float:
     if shifts_df.empty or "status" not in shifts_df.columns:
         return 0.0
     clean_sid = clean_str(student_id).upper()
+    if not clean_sid:
+        return 0.0
     c_shifts = shifts_df[
         (shifts_df["student_id"].apply(lambda x: clean_str(x).upper()) == clean_sid) & 
         (shifts_df["status"].apply(lambda x: clean_str(x).upper()) == "COMPLETED")
     ]
     if c_shifts.empty:
         return 0.0
-    return pd.to_numeric(c_shifts["hours_logged"], errors="coerce").fillna(0.0).sum()
+    total = pd.to_numeric(c_shifts["hours_logged"], errors="coerce").fillna(0.0).sum()
+    return max(0.0, float(total))
 
 def get_active_shift_for_student(student_id: str) -> pd.DataFrame:
-    """Finds active uncompleted shift for a student."""
+    """Finds active uncompleted shift for a student using clean uppercase matching."""
     if shifts_df.empty or "status" not in shifts_df.columns:
         return pd.DataFrame()
     clean_sid = clean_str(student_id).upper()
+    if not clean_sid:
+        return pd.DataFrame()
     return shifts_df[
         (shifts_df["student_id"].apply(lambda x: clean_str(x).upper()) == clean_sid) & 
         (shifts_df["status"].apply(lambda x: clean_str(x).upper()) == "ACTIVE")
@@ -565,12 +573,17 @@ def render_time_clock_view():
                 student_name = f"{clean_str(student['first_name'])} {clean_str(student['last_name'])}".strip()
                 st.session_state["active_pass_sid"] = student_sid
                 
+                # Force update selectbox widget state so profile card updates on scan
+                if not roster_df.empty:
+                    target_label = f"{clean_str(student['first_name'])} {clean_str(student['last_name'])} ({student_sid})"
+                    st.session_state["kiosk_profile_select"] = target_label
+
                 active_shifts = get_active_shift_for_student(student_sid)
 
                 if active_shifts.empty:
                     # CLOCK IN
-                    now = datetime.datetime.now(ZoneInfo("America/New_York"))
-                    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                    now_dt = get_current_et_naive()
+                    now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
                     with engine.begin() as conn:
                         conn.execute(
                             text("INSERT INTO shifts (student_id, name, check_in, check_out, hours_logged, shift_type, status, flagged) VALUES (:s_id, :n, :ci, '', 0.0, :st, 'ACTIVE', 'NO')"),
@@ -578,16 +591,21 @@ def render_time_clock_view():
                         )
                     st.session_state["shifts_df"] = load_table("shifts")
                     log_audit_event("CLOCK_IN", f"{student_name} ({student_sid}) clocked in for {shift_type}")
-                    st.success(f"✅ PUNCH IN: {student_name} at {now.strftime('%H:%M:%S')}")
+                    st.success(f"✅ PUNCH IN: {student_name} at {now_dt.strftime('%H:%M:%S')}")
                     st.rerun()
                 else:
                     # CLOCK OUT
                     shift_id = int(active_shifts.iloc[0]["id"])
-                    checked_in = datetime.datetime.strptime(clean_str(active_shifts.iloc[0]["check_in"]), "%Y-%m-%d %H:%M:%S")
-                    now = datetime.datetime.now(ZoneInfo("America/New_York"))
+                    checked_in_str = clean_str(active_shifts.iloc[0]["check_in"])
+                    now_dt = get_current_et_naive()
                     
-                    # Compute duration in hours
-                    raw_hours = (now.replace(tzinfo=None) - checked_in).total_seconds() / 3600.0
+                    try:
+                        checked_in_dt = datetime.datetime.strptime(checked_in_str, "%Y-%m-%d %H:%M:%S")
+                        raw_hours = (now_dt - checked_in_dt).total_seconds() / 3600.0
+                    except Exception:
+                        raw_hours = 0.0
+
+                    raw_hours = max(0.0, raw_hours)
 
                     flagged = "NO"
                     if raw_hours > MAX_SHIFT_HOURS:
@@ -597,7 +615,7 @@ def render_time_clock_view():
                     else:
                         duration_hours = round(raw_hours, 4)
 
-                    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                    now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
                     with engine.begin() as conn:
                         conn.execute(
                             text("UPDATE shifts SET check_out = :co, hours_logged = :hl, status = 'COMPLETED', flagged = :fl WHERE id = :sid"),
@@ -633,14 +651,18 @@ def render_time_clock_view():
             student_ids = list(student_opts.values())
 
             active_sid = st.session_state.get("active_pass_sid", student_ids[0] if student_ids else "")
-            default_index = student_ids.index(active_sid) if active_sid in student_ids else 0
+            
+            if "kiosk_profile_select" not in st.session_state or st.session_state["kiosk_profile_select"] not in student_labels:
+                matched_labels = [lbl for lbl, sid in student_opts.items() if sid == active_sid]
+                st.session_state["kiosk_profile_select"] = matched_labels[0] if matched_labels else student_labels[0]
 
-            selected_pass_label = st.selectbox("Active Profile View:", student_labels, index=default_index, label_visibility="collapsed")
+            selected_pass_label = st.selectbox("Active Profile View:", student_labels, key="kiosk_profile_select", label_visibility="collapsed")
             pass_sid = student_opts[selected_pass_label]
             pass_student = student_lookup_by_code(pass_sid)
 
             if pass_student is not None:
                 req_h = float(pass_student["req_hours"]) if "req_hours" in pass_student and pd.notna(pass_student["req_hours"]) else 10.0
+                req_h = max(0.1, req_h)
                 logged_h = get_logged_hours(clean_str(pass_student["student_id"]))
                 rem_h = max(0.0, req_h - logged_h)
 
@@ -794,9 +816,14 @@ else:
             st.info("No enrolled students in the database.")
         else:
             summary_df = roster_df.copy()
-            summary_df["req_hours"] = pd.to_numeric(summary_df["req_hours"], errors="coerce").fillna(10.0)
+            summary_df["req_hours"] = pd.to_numeric(summary_df["req_hours"], errors="coerce").fillna(10.0).apply(lambda x: max(0.1, float(x)))
             summary_df["hours_logged"] = summary_df["student_id"].apply(lambda sid: get_logged_hours(clean_str(sid)))
-            summary_df["progress_%"] = ((summary_df["hours_logged"] / summary_df["req_hours"]) * 100).round(1)
+            
+            # Clamp progress % between 0.0 and 100.0 to prevent negative rendering
+            summary_df["progress_%"] = summary_df.apply(
+                lambda r: round(min(100.0, max(0.0, (r["hours_logged"] / r["req_hours"]) * 100)), 1),
+                axis=1
+            )
 
             a1, a2, a3 = st.columns(3)
             a1.metric("Enrolled Students", len(summary_df))
@@ -806,8 +833,8 @@ else:
 
             st.subheader("Student Hours Progress & Countdown Tally Roster")
             for idx, row in summary_df.iterrows():
-                req_h = float(row['req_hours']) if pd.notna(row['req_hours']) else 10.0
-                log_h = float(row['hours_logged']) if pd.notna(row['hours_logged']) else 0.0
+                req_h = float(row['req_hours'])
+                log_h = float(row['hours_logged'])
                 rem_h = max(0.0, req_h - log_h)
                 
                 c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1.4, 1.6])
@@ -817,7 +844,7 @@ else:
                 rem_text = "Completed! 🎉" if rem_h == 0 else f"Rem: {format_hours_mins(rem_h)}"
                 c_hours.markdown(f"**{format_hours_mins(log_h)}** / {req_h} hrs  \n<span style='font-size: 12px; color: #93c5fd;'>{rem_text}</span>", unsafe_allow_html=True)
                 
-                pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0) if pd.notna(row["progress_%"]) else 0.0
+                pct = min(max(float(row["progress_%"]) / 100.0, 0.0), 1.0)
                 c_bar.progress(pct, text=f"{row['progress_%']}%")
 
         st.markdown("---")
@@ -842,14 +869,16 @@ else:
 
             if save_pair_btn:
                 clean_bc_input = clean_str(scanned_pair_barcode)
+                clean_target_sid = clean_str(target_sid)
                 with engine.begin() as conn:
                     conn.execute(
-                        text("UPDATE roster SET barcode_id = :bc WHERE student_id = :sid"),
-                        {"bc": clean_bc_input, "sid": clean_str(target_sid)}
+                        text("UPDATE roster SET barcode_id = :bc WHERE LOWER(TRIM(student_id)) = LOWER(TRIM(:sid))"),
+                        {"bc": clean_bc_input, "sid": clean_target_sid}
                     )
                 st.session_state["roster_df"] = load_table("roster")
-                log_audit_event("LINK_BARCODE", f"Linked barcode '{clean_bc_input}' to student ID {target_sid}")
-                st.success(f"✅ Barcode / SHS ID '{clean_bc_input}' linked to profile {target_sid} in Neon DB!")
+                st.session_state["active_pass_sid"] = clean_target_sid
+                log_audit_event("LINK_BARCODE", f"Linked barcode '{clean_bc_input}' to student ID {clean_target_sid}")
+                st.success(f"✅ Barcode / SHS ID '{clean_bc_input}' linked to profile {clean_target_sid} in Neon DB!")
                 st.rerun()
 
         st.markdown("---")
@@ -890,7 +919,7 @@ else:
 
                 if st.button("❌ Permanently Delete Student Profile"):
                     with engine.begin() as conn:
-                        conn.execute(text("DELETE FROM roster WHERE student_id = :sid"), {"sid": clean_str(rem_sid)})
+                        conn.execute(text("DELETE FROM roster WHERE LOWER(TRIM(student_id)) = LOWER(TRIM(:sid))"), {"sid": clean_str(rem_sid)})
                     st.session_state["roster_df"] = load_table("roster")
                     log_audit_event("DELETE_STUDENT", f"Deleted student ({rem_sid}) from Neon DB.")
                     st.success(f"Removed student profile ({rem_sid}) from Neon DB.")
