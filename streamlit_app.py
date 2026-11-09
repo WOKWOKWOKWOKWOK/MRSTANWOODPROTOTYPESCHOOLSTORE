@@ -23,7 +23,7 @@ KIOSK_USERS = ["kiosk.org", "signin.org"]
 DEFAULT_ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", st.secrets.get("postgres", {}).get("ADMIN_PASSWORD", "DECA2026!"))
 DEFAULT_KIOSK_PASSWORD = st.secrets.get("KIOSK_PASSWORD", st.secrets.get("postgres", {}).get("KIOSK_PASSWORD", "LOGINDECA2026!"))
 
-# --- DATA SANITIZER HELPER ---
+# --- DATA SANITIZER & DATE HELPERS ---
 def clean_str(val, default="") -> str:
     """Converts NaN, None, floats ending in .0, or messy values into clean strings."""
     if pd.isna(val) or val is None:
@@ -36,11 +36,30 @@ def clean_str(val, default="") -> str:
     return s
 
 def get_current_et_naive() -> datetime.datetime:
-    """Returns current US/Eastern time as naive datetime for reliable math."""
+    """Returns current US/Eastern time as naive datetime for reliable calculations."""
     try:
         return datetime.datetime.now(ZoneInfo("America/New_York")).replace(tzinfo=None)
     except Exception:
         return datetime.datetime.now().replace(tzinfo=None)
+
+def parse_datetime_safe(dt_str: str) -> datetime.datetime:
+    """Safely parses timestamp strings in multiple standard formats."""
+    clean_ts = clean_str(dt_str)
+    if not clean_ts:
+        return get_current_et_naive()
+    
+    formats = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d %H:%M",
+    ]
+    for fmt in formats:
+        try:
+            return datetime.datetime.strptime(clean_ts, fmt)
+        except ValueError:
+            continue
+    return get_current_et_naive()
 
 # --- NEON DATABASE ENGINE ---
 @st.cache_resource
@@ -412,34 +431,49 @@ def student_lookup_by_code(query_val: str) -> pd.Series | None:
     ]
     return None if match.empty else match.iloc[0]
 
-def get_logged_hours(student_id: str) -> float:
+def get_logged_hours(student_id: str, barcode_id: str = "") -> float:
+    """Calculates total completed hours directly from PostgreSQL across student ID and barcode."""
     clean_sid = clean_str(student_id).upper()
-    if not clean_sid:
+    clean_bc = clean_str(barcode_id).upper()
+    
+    if not clean_sid and not clean_bc:
         return 0.0
     try:
         with engine.connect() as conn:
             res = conn.execute(
-                text("SELECT SUM(hours_logged) FROM shifts WHERE LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) AND LOWER(TRIM(status)) = 'completed'"),
-                {"sid": clean_sid}
+                text("""
+                    SELECT SUM(hours_logged) FROM shifts 
+                    WHERE (
+                        LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) 
+                        OR LOWER(TRIM(student_id)) = LOWER(TRIM(:bc))
+                    )
+                    AND LOWER(TRIM(status)) = 'completed'
+                """),
+                {"sid": clean_sid, "bc": clean_bc}
             ).scalar()
             return max(0.0, float(res)) if res is not None else 0.0
     except Exception:
         return 0.0
 
-def get_active_shift_direct_from_db(student_id: str) -> pd.DataFrame:
-    """Queries Neon DB directly for active shifts to eliminate state caching issues."""
+def get_active_shift_direct_from_db(student_id: str, barcode_id: str = "", scanned_code: str = "") -> pd.DataFrame:
+    """Queries Neon DB directly for active shifts matching ID, Barcode, or Scanned input."""
     clean_sid = clean_str(student_id).upper()
-    if not clean_sid:
-        return pd.DataFrame()
+    clean_bc = clean_str(barcode_id).upper()
+    clean_code = clean_str(scanned_code).upper()
+
     try:
         query = text("""
             SELECT * FROM shifts 
-            WHERE LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) 
-              AND LOWER(TRIM(status)) = 'active'
+            WHERE (
+                LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) 
+                OR LOWER(TRIM(student_id)) = LOWER(TRIM(:bc))
+                OR LOWER(TRIM(student_id)) = LOWER(TRIM(:code))
+            ) 
+            AND LOWER(TRIM(status)) = 'active'
             ORDER BY id DESC
         """)
         with engine.connect() as conn:
-            return pd.read_sql(query, conn, params={"sid": clean_sid})
+            return pd.read_sql(query, conn, params={"sid": clean_sid, "bc": clean_bc, "code": clean_code})
     except Exception:
         return pd.DataFrame()
 
@@ -576,16 +610,17 @@ def render_time_clock_view():
                 st.error(f"❌ Barcode / ID '{clean_code}' not found in roster.")
             else:
                 student_sid = clean_str(student["student_id"])
+                student_bc = clean_str(student.get("barcode_id"))
                 student_name = f"{clean_str(student['first_name'])} {clean_str(student['last_name'])}".strip()
                 st.session_state["active_pass_sid"] = student_sid
                 
-                # Update selectbox state to trigger live card display
+                # Force update profile dropdown state so card updates on scan
                 if not roster_df.empty:
                     target_label = f"{clean_str(student['first_name'])} {clean_str(student['last_name'])} ({student_sid})"
                     st.session_state["kiosk_profile_select"] = target_label
 
-                # Query database directly to check for active shifts
-                active_shifts = get_active_shift_direct_from_db(student_sid)
+                # Query database directly for ANY active shift matching ID, barcode, or scanned code
+                active_shifts = get_active_shift_direct_from_db(student_sid, student_bc, clean_code)
 
                 if active_shifts.empty:
                     # PUNCH IN
@@ -601,19 +636,13 @@ def render_time_clock_view():
                     st.success(f"✅ PUNCH IN: {student_name} at {now_dt.strftime('%H:%M:%S')}")
                     st.rerun()
                 else:
-                    # PUNCH OUT (Close latest active shift and auto-close lingering duplicate active shifts)
+                    # PUNCH OUT
                     primary_shift = active_shifts.iloc[0]
                     primary_shift_id = int(primary_shift["id"])
-                    checked_in_str = clean_str(primary_shift["check_in"])
+                    checked_in_dt = parse_datetime_safe(clean_str(primary_shift["check_in"]))
                     now_dt = get_current_et_naive()
                     
-                    try:
-                        checked_in_dt = datetime.datetime.strptime(checked_in_str, "%Y-%m-%d %H:%M:%S")
-                        raw_hours = (now_dt - checked_in_dt).total_seconds() / 3600.0
-                    except Exception:
-                        raw_hours = 0.0
-
-                    raw_hours = max(0.0, raw_hours)
+                    raw_hours = max(0.0, (now_dt - checked_in_dt).total_seconds() / 3600.0)
 
                     flagged = "NO"
                     if raw_hours > MAX_SHIFT_HOURS:
@@ -625,15 +654,24 @@ def render_time_clock_view():
 
                     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
                     with engine.begin() as conn:
-                        # 1. Complete primary active shift with calculated hours
+                        # 1. Complete primary active shift
                         conn.execute(
                             text("UPDATE shifts SET check_out = :co, hours_logged = :hl, status = 'COMPLETED', flagged = :fl WHERE id = :sid"),
                             {"co": now_str, "hl": duration_hours, "fl": flagged, "sid": primary_shift_id}
                         )
-                        # 2. Cleanup any orphaned/duplicate active shifts for this student
+                        # 2. Automatically close out any lingering duplicate active shifts for this student
                         conn.execute(
-                            text("UPDATE shifts SET check_out = :co, hours_logged = 0.0, status = 'COMPLETED', flagged = 'CLEANUP' WHERE LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) AND LOWER(TRIM(status)) = 'active'"),
-                            {"co": now_str, "sid": student_sid}
+                            text("""
+                                UPDATE shifts 
+                                SET check_out = :co, hours_logged = 0.0, status = 'COMPLETED', flagged = 'CLEANUP' 
+                                WHERE (
+                                    LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) 
+                                    OR LOWER(TRIM(student_id)) = LOWER(TRIM(:bc))
+                                    OR LOWER(TRIM(student_id)) = LOWER(TRIM(:code))
+                                ) 
+                                AND LOWER(TRIM(status)) = 'active'
+                            """),
+                            {"co": now_str, "sid": student_sid, "bc": student_bc, "code": clean_code}
                         )
 
                     st.session_state["shifts_df"] = load_table("shifts")
@@ -644,7 +682,10 @@ def render_time_clock_view():
 
     with col_status:
         st.markdown("<h4 style='margin-bottom:2px;'>📋 Currently On Shift</h4>", unsafe_allow_html=True)
-        active_now = shifts_df[shifts_df["status"].apply(lambda x: clean_str(x).upper()) == "ACTIVE"] if not shifts_df.empty and "status" in shifts_df.columns else pd.DataFrame()
+        active_now = load_table("shifts")
+        if not active_now.empty and "status" in active_now.columns:
+            active_now = active_now[active_now["status"].apply(lambda x: clean_str(x).upper()) == "ACTIVE"]
+        
         if active_now.empty:
             st.info("No students currently clocked in.")
         else:
@@ -677,7 +718,7 @@ def render_time_clock_view():
             if pass_student is not None:
                 req_h = float(pass_student["req_hours"]) if "req_hours" in pass_student and pd.notna(pass_student["req_hours"]) else 10.0
                 req_h = max(0.1, req_h)
-                logged_h = get_logged_hours(clean_str(pass_student["student_id"]))
+                logged_h = get_logged_hours(clean_str(pass_student["student_id"]), clean_str(pass_student.get("barcode_id")))
                 rem_h = max(0.0, req_h - logged_h)
 
                 render_barcode_keycard(
@@ -831,7 +872,7 @@ else:
         else:
             summary_df = roster_df.copy()
             summary_df["req_hours"] = pd.to_numeric(summary_df["req_hours"], errors="coerce").fillna(10.0).apply(lambda x: max(0.1, float(x)))
-            summary_df["hours_logged"] = summary_df["student_id"].apply(lambda sid: get_logged_hours(clean_str(sid)))
+            summary_df["hours_logged"] = summary_df.apply(lambda r: get_logged_hours(clean_str(r["student_id"]), clean_str(r.get("barcode_id"))), axis=1)
             
             summary_df["progress_%"] = summary_df.apply(
                 lambda r: round(min(100.0, max(0.0, (r["hours_logged"] / r["req_hours"]) * 100)), 1),
