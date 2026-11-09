@@ -87,7 +87,6 @@ def init_db():
                 privacy_opt_out VARCHAR(10) DEFAULT 'NO'
             );
         """))
-        # Ensure column exists if table was initialized previously
         conn.execute(text("ALTER TABLE roster ADD COLUMN IF NOT EXISTS privacy_opt_out VARCHAR(10) DEFAULT 'NO';"))
 
         conn.execute(text("""
@@ -417,21 +416,22 @@ if "roster_df" not in st.session_state:
 
 sync_revtrak_orders(silent=True)
 
-roster_df = st.session_state["roster_df"]
-shifts_df = st.session_state["shifts_df"]
-inventory_df = st.session_state["inventory_df"]
-sales_df = st.session_state["sales_df"]
+def get_current_roster() -> pd.DataFrame:
+    if "roster_df" not in st.session_state or st.session_state["roster_df"].empty:
+        st.session_state["roster_df"] = load_table("roster")
+    return st.session_state["roster_df"]
 
 def student_lookup_by_code(query_val: str) -> pd.Series | None:
-    if roster_df.empty:
+    current_roster = get_current_roster()
+    if current_roster.empty:
         return None
     clean_val = clean_str(query_val).upper()
     if not clean_val:
         return None
         
-    match = roster_df[
-        (roster_df["student_id"].apply(lambda x: clean_str(x).upper()) == clean_val) | 
-        (roster_df["barcode_id"].apply(lambda x: clean_str(x).upper()) == clean_val)
+    match = current_roster[
+        (current_roster["student_id"].apply(lambda x: clean_str(x).upper()) == clean_val) | 
+        (current_roster["barcode_id"].apply(lambda x: clean_str(x).upper()) == clean_val)
     ]
     return None if match.empty else match.iloc[0]
 
@@ -464,7 +464,7 @@ def get_logged_hours(student_id: str, barcode_id: str = "") -> float:
         return 0.0
 
 def get_active_shift_direct_from_db(student_id: str, barcode_id: str = "", scanned_code: str = "") -> pd.DataFrame:
-    """Queries Neon DB directly for ACTIVE shifts strictly matching non-empty IDs."""
+    """Queries Neon DB directly for ACTIVE shifts without relying on pandas parameter binding."""
     clean_sid = clean_str(student_id).upper()
     clean_bc = clean_str(barcode_id).upper()
     clean_code = clean_str(scanned_code).upper()
@@ -486,10 +486,20 @@ def get_active_shift_direct_from_db(student_id: str, barcode_id: str = "", scann
 
     where_clause = " OR ".join(conditions)
     try:
-        query = text(f"SELECT * FROM shifts WHERE ({where_clause}) AND LOWER(TRIM(status)) = 'active' ORDER BY id DESC")
+        query = text(f"""
+            SELECT id, student_id, name, check_in, check_out, hours_logged, shift_type, status, flagged
+            FROM shifts
+            WHERE ({where_clause}) AND LOWER(TRIM(status)) = 'active'
+            ORDER BY id DESC
+        """)
         with engine.connect() as conn:
-            return pd.read_sql(query, conn, params=params)
-    except Exception:
+            result = conn.execute(query, params)
+            rows = result.mappings().all()
+            if not rows:
+                return pd.DataFrame()
+            return pd.DataFrame(rows)
+    except Exception as e:
+        st.error(f"Error querying active shift database: {e}")
         return pd.DataFrame()
 
 # ----------------------------------------------------
@@ -597,6 +607,7 @@ def render_time_clock_view():
     )
 
     col_punch, col_status, col_profile = st.columns([1.1, 1, 1.1])
+    roster_df = get_current_roster()
 
     with col_punch:
         st.markdown("<h4 style='margin-bottom:2px;'>⏱️ Job Punch Clock</h4>", unsafe_allow_html=True)
@@ -777,6 +788,11 @@ if not st.session_state["is_admin"]:
     render_time_clock_view()
 
 else:
+    roster_df = get_current_roster()
+    shifts_df = st.session_state.get("shifts_df", load_table("shifts"))
+    inventory_df = st.session_state.get("inventory_df", load_table("inventory"))
+    sales_df = st.session_state.get("sales_df", load_table("sales"))
+
     with st.expander("⚙️ Store Controls & Reset Tools"):
         ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.5, 1, 1])
         with ctrl_col1:
