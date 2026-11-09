@@ -25,10 +25,12 @@ DEFAULT_KIOSK_PASSWORD = st.secrets.get("KIOSK_PASSWORD", st.secrets.get("postgr
 
 # --- DATA SANITIZER HELPER ---
 def clean_str(val, default="") -> str:
-    """Converts NaN, None, or messy values into clean strings."""
+    """Converts NaN, None, floats ending in .0, or messy values into clean strings."""
     if pd.isna(val) or val is None:
         return default
     s = str(val).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
     if s.lower() in ["nan", "none", "<na>", "null"]:
         return default
     return s
@@ -411,31 +413,35 @@ def student_lookup_by_code(query_val: str) -> pd.Series | None:
     return None if match.empty else match.iloc[0]
 
 def get_logged_hours(student_id: str) -> float:
-    if shifts_df.empty or "status" not in shifts_df.columns:
-        return 0.0
     clean_sid = clean_str(student_id).upper()
     if not clean_sid:
         return 0.0
-    c_shifts = shifts_df[
-        (shifts_df["student_id"].apply(lambda x: clean_str(x).upper()) == clean_sid) & 
-        (shifts_df["status"].apply(lambda x: clean_str(x).upper()) == "COMPLETED")
-    ]
-    if c_shifts.empty:
+    try:
+        with engine.connect() as conn:
+            res = conn.execute(
+                text("SELECT SUM(hours_logged) FROM shifts WHERE LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) AND LOWER(TRIM(status)) = 'completed'"),
+                {"sid": clean_sid}
+            ).scalar()
+            return max(0.0, float(res)) if res is not None else 0.0
+    except Exception:
         return 0.0
-    total = pd.to_numeric(c_shifts["hours_logged"], errors="coerce").fillna(0.0).sum()
-    return max(0.0, float(total))
 
-def get_active_shift_for_student(student_id: str) -> pd.DataFrame:
-    """Finds active uncompleted shift for a student using clean uppercase matching."""
-    if shifts_df.empty or "status" not in shifts_df.columns:
-        return pd.DataFrame()
+def get_active_shift_direct_from_db(student_id: str) -> pd.DataFrame:
+    """Queries Neon DB directly for active shifts to eliminate state caching issues."""
     clean_sid = clean_str(student_id).upper()
     if not clean_sid:
         return pd.DataFrame()
-    return shifts_df[
-        (shifts_df["student_id"].apply(lambda x: clean_str(x).upper()) == clean_sid) & 
-        (shifts_df["status"].apply(lambda x: clean_str(x).upper()) == "ACTIVE")
-    ]
+    try:
+        query = text("""
+            SELECT * FROM shifts 
+            WHERE LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) 
+              AND LOWER(TRIM(status)) = 'active'
+            ORDER BY id DESC
+        """)
+        with engine.connect() as conn:
+            return pd.read_sql(query, conn, params={"sid": clean_sid})
+    except Exception:
+        return pd.DataFrame()
 
 # ----------------------------------------------------
 # AUTHENTICATION & LOGIN SCREEN
@@ -573,15 +579,16 @@ def render_time_clock_view():
                 student_name = f"{clean_str(student['first_name'])} {clean_str(student['last_name'])}".strip()
                 st.session_state["active_pass_sid"] = student_sid
                 
-                # Force update selectbox widget state so profile card updates on scan
+                # Update selectbox state to trigger live card display
                 if not roster_df.empty:
                     target_label = f"{clean_str(student['first_name'])} {clean_str(student['last_name'])} ({student_sid})"
                     st.session_state["kiosk_profile_select"] = target_label
 
-                active_shifts = get_active_shift_for_student(student_sid)
+                # Query database directly to check for active shifts
+                active_shifts = get_active_shift_direct_from_db(student_sid)
 
                 if active_shifts.empty:
-                    # CLOCK IN
+                    # PUNCH IN
                     now_dt = get_current_et_naive()
                     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
                     with engine.begin() as conn:
@@ -594,9 +601,10 @@ def render_time_clock_view():
                     st.success(f"✅ PUNCH IN: {student_name} at {now_dt.strftime('%H:%M:%S')}")
                     st.rerun()
                 else:
-                    # CLOCK OUT
-                    shift_id = int(active_shifts.iloc[0]["id"])
-                    checked_in_str = clean_str(active_shifts.iloc[0]["check_in"])
+                    # PUNCH OUT (Close latest active shift and auto-close lingering duplicate active shifts)
+                    primary_shift = active_shifts.iloc[0]
+                    primary_shift_id = int(primary_shift["id"])
+                    checked_in_str = clean_str(primary_shift["check_in"])
                     now_dt = get_current_et_naive()
                     
                     try:
@@ -617,9 +625,15 @@ def render_time_clock_view():
 
                     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
                     with engine.begin() as conn:
+                        # 1. Complete primary active shift with calculated hours
                         conn.execute(
                             text("UPDATE shifts SET check_out = :co, hours_logged = :hl, status = 'COMPLETED', flagged = :fl WHERE id = :sid"),
-                            {"co": now_str, "hl": duration_hours, "fl": flagged, "sid": shift_id}
+                            {"co": now_str, "hl": duration_hours, "fl": flagged, "sid": primary_shift_id}
+                        )
+                        # 2. Cleanup any orphaned/duplicate active shifts for this student
+                        conn.execute(
+                            text("UPDATE shifts SET check_out = :co, hours_logged = 0.0, status = 'COMPLETED', flagged = 'CLEANUP' WHERE LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) AND LOWER(TRIM(status)) = 'active'"),
+                            {"co": now_str, "sid": student_sid}
                         )
 
                     st.session_state["shifts_df"] = load_table("shifts")
@@ -819,7 +833,6 @@ else:
             summary_df["req_hours"] = pd.to_numeric(summary_df["req_hours"], errors="coerce").fillna(10.0).apply(lambda x: max(0.1, float(x)))
             summary_df["hours_logged"] = summary_df["student_id"].apply(lambda sid: get_logged_hours(clean_str(sid)))
             
-            # Clamp progress % between 0.0 and 100.0 to prevent negative rendering
             summary_df["progress_%"] = summary_df.apply(
                 lambda r: round(min(100.0, max(0.0, (r["hours_logged"] / r["req_hours"]) * 100)), 1),
                 axis=1
