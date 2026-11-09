@@ -83,9 +83,13 @@ def init_db():
                 course VARCHAR(100),
                 track VARCHAR(100),
                 req_hours FLOAT DEFAULT 10.0,
-                photo_url TEXT
+                photo_url TEXT,
+                privacy_opt_out VARCHAR(10) DEFAULT 'NO'
             );
         """))
+        # Ensure column exists if table was initialized previously
+        conn.execute(text("ALTER TABLE roster ADD COLUMN IF NOT EXISTS privacy_opt_out VARCHAR(10) DEFAULT 'NO';"))
+
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS shifts (
                 id SERIAL PRIMARY KEY,
@@ -432,48 +436,59 @@ def student_lookup_by_code(query_val: str) -> pd.Series | None:
     return None if match.empty else match.iloc[0]
 
 def get_logged_hours(student_id: str, barcode_id: str = "") -> float:
-    """Calculates total completed hours directly from PostgreSQL across student ID and barcode."""
+    """Calculates completed shift hours strictly avoiding empty string matches."""
     clean_sid = clean_str(student_id).upper()
     clean_bc = clean_str(barcode_id).upper()
     
-    if not clean_sid and not clean_bc:
+    conditions = []
+    params = {}
+    if clean_sid:
+        conditions.append("LOWER(TRIM(student_id)) = LOWER(TRIM(:sid))")
+        params["sid"] = clean_sid
+    if clean_bc:
+        conditions.append("LOWER(TRIM(student_id)) = LOWER(TRIM(:bc))")
+        params["bc"] = clean_bc
+        
+    if not conditions:
         return 0.0
+        
+    where_clause = " OR ".join(conditions)
     try:
         with engine.connect() as conn:
             res = conn.execute(
-                text("""
-                    SELECT SUM(hours_logged) FROM shifts 
-                    WHERE (
-                        LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) 
-                        OR LOWER(TRIM(student_id)) = LOWER(TRIM(:bc))
-                    )
-                    AND LOWER(TRIM(status)) = 'completed'
-                """),
-                {"sid": clean_sid, "bc": clean_bc}
+                text(f"SELECT SUM(hours_logged) FROM shifts WHERE ({where_clause}) AND LOWER(TRIM(status)) = 'completed'"),
+                params
             ).scalar()
             return max(0.0, float(res)) if res is not None else 0.0
     except Exception:
         return 0.0
 
 def get_active_shift_direct_from_db(student_id: str, barcode_id: str = "", scanned_code: str = "") -> pd.DataFrame:
-    """Queries Neon DB directly for active shifts matching ID, Barcode, or Scanned input."""
+    """Queries Neon DB directly for ACTIVE shifts strictly matching non-empty IDs."""
     clean_sid = clean_str(student_id).upper()
     clean_bc = clean_str(barcode_id).upper()
     clean_code = clean_str(scanned_code).upper()
 
+    conditions = []
+    params = {}
+    if clean_sid:
+        conditions.append("LOWER(TRIM(student_id)) = LOWER(TRIM(:sid))")
+        params["sid"] = clean_sid
+    if clean_bc:
+        conditions.append("LOWER(TRIM(student_id)) = LOWER(TRIM(:bc))")
+        params["bc"] = clean_bc
+    if clean_code:
+        conditions.append("LOWER(TRIM(student_id)) = LOWER(TRIM(:code))")
+        params["code"] = clean_code
+
+    if not conditions:
+        return pd.DataFrame()
+
+    where_clause = " OR ".join(conditions)
     try:
-        query = text("""
-            SELECT * FROM shifts 
-            WHERE (
-                LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) 
-                OR LOWER(TRIM(student_id)) = LOWER(TRIM(:bc))
-                OR LOWER(TRIM(student_id)) = LOWER(TRIM(:code))
-            ) 
-            AND LOWER(TRIM(status)) = 'active'
-            ORDER BY id DESC
-        """)
+        query = text(f"SELECT * FROM shifts WHERE ({where_clause}) AND LOWER(TRIM(status)) = 'active' ORDER BY id DESC")
         with engine.connect() as conn:
-            return pd.read_sql(query, conn, params={"sid": clean_sid, "bc": clean_bc, "code": clean_code})
+            return pd.read_sql(query, conn, params=params)
     except Exception:
         return pd.DataFrame()
 
@@ -654,20 +669,20 @@ def render_time_clock_view():
 
                     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
                     with engine.begin() as conn:
-                        # 1. Complete primary active shift
+                        # Complete primary active shift
                         conn.execute(
                             text("UPDATE shifts SET check_out = :co, hours_logged = :hl, status = 'COMPLETED', flagged = :fl WHERE id = :sid"),
                             {"co": now_str, "hl": duration_hours, "fl": flagged, "sid": primary_shift_id}
                         )
-                        # 2. Automatically close out any lingering duplicate active shifts for this student
+                        # Automatically close out any lingering duplicate active shifts for this student
                         conn.execute(
                             text("""
                                 UPDATE shifts 
                                 SET check_out = :co, hours_logged = 0.0, status = 'COMPLETED', flagged = 'CLEANUP' 
                                 WHERE (
-                                    LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) 
-                                    OR LOWER(TRIM(student_id)) = LOWER(TRIM(:bc))
-                                    OR LOWER(TRIM(student_id)) = LOWER(TRIM(:code))
+                                    (LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) AND :sid != '')
+                                    OR (LOWER(TRIM(student_id)) = LOWER(TRIM(:bc)) AND :bc != '')
+                                    OR (LOWER(TRIM(student_id)) = LOWER(TRIM(:code)) AND :code != '')
                                 ) 
                                 AND LOWER(TRIM(status)) = 'active'
                             """),
@@ -729,9 +744,29 @@ def render_time_clock_view():
                     photo_url=clean_str(pass_student.get("photo_url"))
                 )
 
-                p1, p2 = st.columns(2)
-                p1.metric("Completed", format_hours_mins(logged_h))
-                p2.metric("Remaining", "Done! 🎉" if rem_h == 0 else format_hours_mins(rem_h))
+                # Privacy Opt-In / Opt-Out Tally Display
+                is_private = (clean_str(pass_student.get("privacy_opt_out", "NO")).upper() == "YES")
+                if is_private:
+                    p1, p2 = st.columns(2)
+                    p1.metric("Completed", "🔒 Private Mode")
+                    p2.metric("Remaining", "🔒 Private Mode")
+                else:
+                    p1, p2 = st.columns(2)
+                    p1.metric("Completed", format_hours_mins(logged_h))
+                    p2.metric("Remaining", "Done! 🎉" if rem_h == 0 else format_hours_mins(rem_h))
+
+                # Privacy Toggle Button
+                toggle_btn_text = "👁️ Show Hours Publicly" if is_private else "🔒 Hide My Hours (Private Mode)"
+                if st.button(toggle_btn_text, key=f"priv_btn_{clean_str(pass_student['student_id'])}"):
+                    new_val = "NO" if is_private else "YES"
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("UPDATE roster SET privacy_opt_out = :p WHERE LOWER(TRIM(student_id)) = LOWER(TRIM(:sid))"),
+                            {"p": new_val, "sid": clean_str(pass_student['student_id'])}
+                        )
+                    st.session_state["roster_df"] = load_table("roster")
+                    st.toast("Privacy setting saved!")
+                    st.rerun()
             else:
                 st.info("Select a student to view details.")
 
@@ -742,7 +777,7 @@ if not st.session_state["is_admin"]:
     render_time_clock_view()
 
 else:
-    with st.expander("⚙️ Store Controls & Database Settings"):
+    with st.expander("⚙️ Store Controls & Reset Tools"):
         ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.5, 1, 1])
         with ctrl_col1:
             low_stock_limit = st.slider("Low stock warning threshold:", min_value=1, max_value=20, value=5)
@@ -759,8 +794,18 @@ else:
         with ctrl_col3:
             st.write("")
             st.write("")
-            if st.button("🌐 Force Manual RevTrak Sync"):
-                sync_revtrak_orders(silent=False)
+            with st.popover("⚠️ Reset Active Shifts / Fix Clocks"):
+                st.write("Force-close all stuck active shifts without logging hours.")
+                if st.button("Confirm Reset Active Shifts"):
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("UPDATE shifts SET status = 'CANCELLED', check_out = :co WHERE LOWER(TRIM(status)) = 'active'"),
+                            {"co": get_current_et_naive().strftime("%Y-%m-%d %H:%M:%S")}
+                        )
+                    st.session_state["shifts_df"] = load_table("shifts")
+                    log_audit_event("RESET_ACTIVE_SHIFTS", "Admin reset all stuck active shifts.")
+                    st.toast("🧹 Active shifts reset!")
+                    st.rerun()
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Enrolled Students", len(roster_df))
@@ -890,9 +935,11 @@ else:
                 req_h = float(row['req_hours'])
                 log_h = float(row['hours_logged'])
                 rem_h = max(0.0, req_h - log_h)
+                is_priv = (clean_str(row.get("privacy_opt_out", "NO")).upper() == "YES")
                 
                 c_name, c_course, c_hours, c_bar = st.columns([1.5, 1.2, 1.4, 1.6])
-                c_name.markdown(f"**{clean_str(row['first_name'])} {clean_str(row['last_name'])}** (`ID: {clean_str(row['student_id'])}` | `BC: {clean_str(row['barcode_id'], default=clean_str(row['student_id']))}`) ")
+                priv_tag = " 🔒" if is_priv else ""
+                c_name.markdown(f"**{clean_str(row['first_name'])} {clean_str(row['last_name'])}**{priv_tag} (`ID: {clean_str(row['student_id'])}` | `BC: {clean_str(row['barcode_id'], default=clean_str(row['student_id']))}`) ")
                 c_course.caption(f"{clean_str(row['course'])} • {clean_str(row['track'])}")
                 
                 rem_text = "Completed! 🎉" if rem_h == 0 else f"Rem: {format_hours_mins(rem_h)}"
@@ -954,7 +1001,7 @@ else:
                 else:
                     with engine.begin() as conn:
                         conn.execute(
-                            text("INSERT INTO roster (student_id, barcode_id, first_name, last_name, course, track, req_hours, photo_url) VALUES (:sid, :bc, :fn, :ln, :crs, :trk, :req, '')"),
+                            text("INSERT INTO roster (student_id, barcode_id, first_name, last_name, course, track, req_hours, photo_url, privacy_opt_out) VALUES (:sid, :bc, :fn, :ln, :crs, :trk, :req, '', 'NO')"),
                             {"sid": clean_str(st_id), "bc": clean_str(st_bc), "fn": clean_str(st_fn), "ln": clean_str(st_ln), "crs": clean_str(st_course), "trk": clean_str(st_track), "req": float(st_req)}
                         )
                     st.session_state["roster_df"] = load_table("roster")
@@ -979,7 +1026,7 @@ else:
                     st.success(f"Removed student profile ({rem_sid}) from Neon DB.")
                     st.rerun()
 
-    # TAB 4: DATABASE MANAGER
+    # TAB 4: DATABASE MANAGER & HARD RESET
     with tabs[3]:
         st.header("Neon Cloud Database Manager")
         st.caption("Directly inspect and update Neon PostgreSQL database tables.")
@@ -999,6 +1046,24 @@ else:
             log_audit_event("DB_EDITOR_SAVE", f"Manually updated Neon DB table '{sheet_option}'.")
             st.success(f"Table '{sheet_option}' successfully updated in Neon PostgreSQL!")
             st.rerun()
+
+        st.markdown("---")
+        with st.expander("🚨 Nuclear Option: Hard Reset Complete Database", expanded=False):
+            st.error("⚠️ WARNING: This will permanently erase ALL students, shifts, inventory, sales, and audit logs!")
+            wipe_confirm_text = st.text_input(
+                "To confirm complete database wipe, type 'WIPE-ALL-DATA-PERMANENTLY' below:",
+                key="wipe_confirm_input"
+            )
+            if wipe_confirm_text.strip() == "WIPE-ALL-DATA-PERMANENTLY":
+                if st.button("🔥 PERMANENTLY ERASE ALL DATABASE DATA", type="primary"):
+                    with engine.begin() as conn:
+                        conn.execute(text("DROP TABLE IF EXISTS roster, shifts, inventory, sales, audit_logs CASCADE;"))
+                    init_db()
+                    st.session_state.clear()
+                    st.success("💥 Database wiped clean! Initialized fresh tables.")
+                    st.rerun()
+            else:
+                st.info("Type the exact confirmation phrase above to unlock the hard reset button.")
 
     # TAB 5: SYSTEM AUDIT LOGS
     with tabs[4]:
