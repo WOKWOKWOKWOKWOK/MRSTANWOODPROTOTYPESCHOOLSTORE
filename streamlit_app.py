@@ -436,70 +436,44 @@ def student_lookup_by_code(query_val: str) -> pd.Series | None:
     return None if match.empty else match.iloc[0]
 
 def get_logged_hours(student_id: str, barcode_id: str = "") -> float:
-    """Calculates completed shift hours strictly avoiding empty string matches."""
+    """Calculates completed shift hours directly from Neon PostgreSQL."""
     clean_sid = clean_str(student_id).upper()
     clean_bc = clean_str(barcode_id).upper()
     
-    conditions = []
-    params = {}
-    if clean_sid:
-        conditions.append("LOWER(TRIM(student_id)) = LOWER(TRIM(:sid))")
-        params["sid"] = clean_sid
-    if clean_bc:
-        conditions.append("LOWER(TRIM(student_id)) = LOWER(TRIM(:bc))")
-        params["bc"] = clean_bc
-        
-    if not conditions:
+    search_keys = {k for k in [clean_sid, clean_bc] if k}
+    if not search_keys:
         return 0.0
-        
-    where_clause = " OR ".join(conditions)
+
     try:
         with engine.connect() as conn:
-            res = conn.execute(
-                text(f"SELECT SUM(hours_logged) FROM shifts WHERE ({where_clause}) AND LOWER(TRIM(status)) = 'completed'"),
-                params
-            ).scalar()
-            return max(0.0, float(res)) if res is not None else 0.0
+            df = pd.read_sql(text("SELECT student_id, hours_logged, status FROM shifts WHERE UPPER(TRIM(status)) = 'COMPLETED'"), conn)
+            if df.empty:
+                return 0.0
+            matched = df[df["student_id"].apply(lambda x: clean_str(x).upper()).isin(search_keys)]
+            total = pd.to_numeric(matched["hours_logged"], errors="coerce").fillna(0.0).sum()
+            return max(0.0, float(total))
     except Exception:
         return 0.0
 
-def get_active_shift_direct_from_db(student_id: str, barcode_id: str = "", scanned_code: str = "") -> pd.DataFrame:
-    """Queries Neon DB directly for ACTIVE shifts without relying on pandas parameter binding."""
+def get_active_shift_for_student(student_id: str, barcode_id: str = "", scanned_code: str = "") -> pd.DataFrame:
+    """Fetches active shifts directly from Neon DB and filters in Python for 100% reliable matching."""
     clean_sid = clean_str(student_id).upper()
     clean_bc = clean_str(barcode_id).upper()
     clean_code = clean_str(scanned_code).upper()
 
-    conditions = []
-    params = {}
-    if clean_sid:
-        conditions.append("LOWER(TRIM(student_id)) = LOWER(TRIM(:sid))")
-        params["sid"] = clean_sid
-    if clean_bc:
-        conditions.append("LOWER(TRIM(student_id)) = LOWER(TRIM(:bc))")
-        params["bc"] = clean_bc
-    if clean_code:
-        conditions.append("LOWER(TRIM(student_id)) = LOWER(TRIM(:code))")
-        params["code"] = clean_code
-
-    if not conditions:
+    search_keys = {k for k in [clean_sid, clean_bc, clean_code] if k}
+    if not search_keys:
         return pd.DataFrame()
 
-    where_clause = " OR ".join(conditions)
     try:
-        query = text(f"""
-            SELECT id, student_id, name, check_in, check_out, hours_logged, shift_type, status, flagged
-            FROM shifts
-            WHERE ({where_clause}) AND LOWER(TRIM(status)) = 'active'
-            ORDER BY id DESC
-        """)
         with engine.connect() as conn:
-            result = conn.execute(query, params)
-            rows = result.mappings().all()
-            if not rows:
+            df = pd.read_sql(text("SELECT id, student_id, name, check_in, check_out, hours_logged, shift_type, status, flagged FROM shifts WHERE UPPER(TRIM(status)) = 'ACTIVE'"), conn)
+            if df.empty:
                 return pd.DataFrame()
-            return pd.DataFrame(rows)
-    except Exception as e:
-        st.error(f"Error querying active shift database: {e}")
+            
+            matched = df[df["student_id"].apply(lambda x: clean_str(x).upper()).isin(search_keys)]
+            return matched.sort_values(by="id", ascending=False)
+    except Exception:
         return pd.DataFrame()
 
 # ----------------------------------------------------
@@ -645,8 +619,8 @@ def render_time_clock_view():
                     target_label = f"{clean_str(student['first_name'])} {clean_str(student['last_name'])} ({student_sid})"
                     st.session_state["kiosk_profile_select"] = target_label
 
-                # Query database directly for ANY active shift matching ID, barcode, or scanned code
-                active_shifts = get_active_shift_direct_from_db(student_sid, student_bc, clean_code)
+                # Check for active shift
+                active_shifts = get_active_shift_for_student(student_sid, student_bc, clean_code)
 
                 if active_shifts.empty:
                     # PUNCH IN
@@ -679,26 +653,21 @@ def render_time_clock_view():
                         duration_hours = round(raw_hours, 4)
 
                     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    all_active_ids = [int(i) for i in active_shifts["id"].tolist()]
+
                     with engine.begin() as conn:
-                        # Complete primary active shift
+                        # 1. Update primary shift with calculated hours
                         conn.execute(
                             text("UPDATE shifts SET check_out = :co, hours_logged = :hl, status = 'COMPLETED', flagged = :fl WHERE id = :sid"),
                             {"co": now_str, "hl": duration_hours, "fl": flagged, "sid": primary_shift_id}
                         )
-                        # Automatically close out any lingering duplicate active shifts for this student
-                        conn.execute(
-                            text("""
-                                UPDATE shifts 
-                                SET check_out = :co, hours_logged = 0.0, status = 'COMPLETED', flagged = 'CLEANUP' 
-                                WHERE (
-                                    (LOWER(TRIM(student_id)) = LOWER(TRIM(:sid)) AND :sid != '')
-                                    OR (LOWER(TRIM(student_id)) = LOWER(TRIM(:bc)) AND :bc != '')
-                                    OR (LOWER(TRIM(student_id)) = LOWER(TRIM(:code)) AND :code != '')
-                                ) 
-                                AND LOWER(TRIM(status)) = 'active'
-                            """),
-                            {"co": now_str, "sid": student_sid, "bc": student_bc, "code": clean_code}
-                        )
+                        # 2. Close out any lingering duplicate active shifts for this student
+                        other_ids = [i for i in all_active_ids if i != primary_shift_id]
+                        for oid in other_ids:
+                            conn.execute(
+                                text("UPDATE shifts SET check_out = :co, hours_logged = 0.0, status = 'COMPLETED', flagged = 'CLEANUP' WHERE id = :oid"),
+                                {"co": now_str, "oid": oid}
+                            )
 
                     st.session_state["shifts_df"] = load_table("shifts")
                     logged_str = format_hours_mins(duration_hours)
